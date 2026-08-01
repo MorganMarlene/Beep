@@ -130,6 +130,33 @@ QPlainTextEdit:focus {{
     border-color: {BLUE_ACCENT};
 }}
 
+QLineEdit {{
+    min-height: 34px;
+    padding: 0 10px;
+    background-color: #09090E;
+    color: #DDE2F2;
+    border: 1px solid #2B2D40;
+    border-radius: 6px;
+    selection-background-color: #174D6B;
+}}
+
+QLineEdit:focus {{
+    border-color: {BLUE_ACCENT};
+}}
+
+QPushButton#SearchNavigationButton {{
+    min-height: 32px;
+    padding: 0 12px;
+    background-color: transparent;
+    border-color: #3A3D53;
+    color: #DDE2F2;
+}}
+
+QPushButton#SearchNavigationButton:hover {{
+    border-color: {BLUE_ACCENT};
+    color: {BLUE_ACCENT};
+}}
+
 QProgressBar {{
     height: 8px;
     background-color: #202230;
