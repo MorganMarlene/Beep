@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+
+# Environments and build output
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and IDEs
+.env
+.idea/
+.vscode/
+
+# Spotlight runtime data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+logs/
+models/
+temp/
+
+# Video and derived media belong outside the repository
+*.avi
+*.flac
+*.m4a
+*.mkv
+*.mov
+*.mp3
+*.mp4
+*.wav
+*.webm
+
