@@ -1,4 +1,4 @@
-"""Command-line entry point for Spotlight."""
+"""Command-line entry point for BEEP."""
 
 from spotlight.app import main
 

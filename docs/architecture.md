@@ -1,4 +1,4 @@
-# Spotlight Version 0.1 Architecture
+# BEEP Version 0.1 Architecture
 
 ## Purpose
 
@@ -6,7 +6,7 @@ Version 0.1 validates one complete local workflow: select a video, inspect it, e
 
 ## Architectural style
 
-Spotlight 0.1 is a small modular monolith. It runs as one desktop application, uses one SQLite database, and delegates only long-running work to a minimal background execution mechanism.
+BEEP 0.1 is a small modular monolith. It runs as one desktop application, uses one SQLite database, and delegates only long-running work to a minimal background execution mechanism.
 
 The design uses a few clear boundaries:
 
@@ -183,4 +183,3 @@ A very small generated media fixture may be used for focused FFmpeg integration 
 ## Deferred architecture
 
 No components for downloading, clip scoring, editing, rendering, captions, computer vision, publishing, or Ollama should be added in Version 0.1. Future milestones may extend the modular monolith after their behavior is explicitly approved.
-

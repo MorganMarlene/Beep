@@ -1,4 +1,4 @@
-# Spotlight Development Roadmap
+# BEEP Development Roadmap
 
 ## Active milestone: Version 0.1
 
@@ -50,7 +50,7 @@ Completion means project metadata survives an application restart.
 - Handle failure without corrupting the saved project.
 - Add focused command-building and integration tests.
 
-Completion means Spotlight reliably produces local audio suitable for faster-whisper while the window remains responsive.
+Completion means BEEP reliably produces local audio suitable for faster-whisper while the window remains responsive.
 
 ### 5. Local transcription
 
@@ -114,4 +114,3 @@ The following work has no approved implementation milestone:
 - Automatic posting
 
 Adding any of these items requires explicit scope approval and a roadmap update first.
-

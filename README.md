@@ -1,12 +1,12 @@
-# Spotlight
+# BEEP
 
-Spotlight is a local Windows desktop application for working with video content. The approved Version 0.1 milestone imports one local video, reads its metadata, extracts its audio, transcribes it locally, and presents a timestamped transcript.
+BEEP is a local Windows desktop application for working with video content. The approved Version 0.1 milestone imports one local video, reads its metadata, extracts its audio, transcribes it locally, and presents a timestamped transcript.
 
 Version 0.1 is deliberately small. It is intended to establish a dependable end-to-end foundation before any clip creation or broader AI automation is considered.
 
 ## Version 0.1 scope
 
-Spotlight 0.1 will:
+BEEP 0.1 will:
 
 1. Let the user select one local video file.
 2. Use `ffprobe` to read and display its filename, duration, resolution, and frame rate.
@@ -45,7 +45,7 @@ These features require separate approval before implementation.
 
 ## Intended Version 0.1 workflow
 
-1. Launch Spotlight.
+1. Launch BEEP.
 2. Select a local video.
 3. Review the detected video metadata.
 4. Start transcription.
@@ -64,4 +64,3 @@ Application code and installation instructions have not yet been created. When i
 - `docs/development-roadmap.md` defines the approved implementation sequence.
 - `docs/decisions/ADR-0001-modular-monolith.md` records the initial architectural decision.
 - `AGENTS.md` contains mandatory instructions for coding agents.
-
