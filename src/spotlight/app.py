@@ -1,4 +1,4 @@
-"""Spotlight's PySide6 application setup."""
+"""BEEP's PySide6 application setup."""
 
 import sys
 from datetime import datetime
@@ -31,6 +31,8 @@ from spotlight.transcription import (
     TranscriptSegment,
     transcribe_video,
 )
+
+APPLICATION_NAME = "BEEP"
 
 
 class ProbeSignals(QObject):
@@ -106,7 +108,7 @@ class SpotlightWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Spotlight")
+        self.setWindowTitle(APPLICATION_NAME)
         self.setMinimumSize(960, 700)
         self.setStyleSheet(DARK_STYLESHEET)
 
@@ -194,9 +196,9 @@ class SpotlightWindow(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(28, 0, 28, 0)
 
-        brand = QLabel("Spot")
+        brand = QLabel("BE")
         brand.setObjectName("Brand")
-        brand_accent = QLabel("light")
+        brand_accent = QLabel("EP")
         brand_accent.setObjectName("BrandAccent")
         layout.addWidget(brand)
         layout.addWidget(brand_accent)
@@ -585,13 +587,14 @@ def format_elapsed_time(seconds: float) -> str:
 
 
 def create_window() -> SpotlightWindow:
-    """Create the main Spotlight window."""
+    """Create the main BEEP window."""
     return SpotlightWindow()
 
 
 def main() -> int:
-    """Run Spotlight until the main window is closed."""
+    """Run BEEP until the main window is closed."""
     application = QApplication(sys.argv)
+    application.setApplicationName(APPLICATION_NAME)
     window = create_window()
     window.show()
     return application.exec()

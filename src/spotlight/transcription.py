@@ -26,7 +26,7 @@ CUDA_INSTALL_INSTRUCTIONS = (
     "https://developer.nvidia.com/cuda-12-8-0-download-archive, then install "
     "NVIDIA cuDNN 9 for CUDA 12 from https://developer.nvidia.com/cudnn-downloads. "
     "Ensure the CUDA and cuDNN bin folders are on your Windows PATH, restart "
-    "Windows, and launch Spotlight again."
+    "Windows, and launch BEEP again."
 )
 
 
@@ -213,7 +213,7 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
         raise TranscriptionError(
             "FFmpeg is not installed or ffmpeg is not available on PATH. "
             "Install FFmpeg from https://ffmpeg.org/download.html, ensure "
-            "ffmpeg.exe is on PATH, and restart Spotlight."
+            "ffmpeg.exe is on PATH, and restart BEEP."
         ) from error
     except subprocess.CalledProcessError as error:
         detail = error.stderr.strip() or "Audio could not be extracted."
@@ -231,8 +231,8 @@ def transcribe_audio(
         from faster_whisper import WhisperModel  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         raise TranscriptionError(
-            "faster-whisper is not installed. From the Spotlight folder, run "
-            "'uv sync' in PowerShell, then restart Spotlight."
+            "faster-whisper is not installed. From the repository folder, run "
+            "'uv sync' in PowerShell, then restart BEEP."
         ) from error
 
     try:

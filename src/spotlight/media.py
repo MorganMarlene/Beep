@@ -14,7 +14,7 @@ class MediaProbeError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class VideoMetadata:
-    """The video details displayed by Spotlight."""
+    """The video details displayed by BEEP."""
 
     duration_seconds: float
     width: int
@@ -98,7 +98,7 @@ def probe_video(path: Path) -> VideoMetadata:
         raise MediaProbeError(
             "FFmpeg is not installed or ffprobe is not available on PATH. "
             "Install FFmpeg from https://ffmpeg.org/download.html, ensure "
-            "ffprobe.exe is on PATH, and restart Spotlight."
+            "ffprobe.exe is on PATH, and restart BEEP."
         ) from error
     except subprocess.TimeoutExpired as error:
         raise MediaProbeError(

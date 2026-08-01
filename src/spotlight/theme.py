@@ -1,4 +1,4 @@
-"""Local visual theme for the Spotlight desktop application."""
+"""Local visual theme for the BEEP desktop application."""
 
 BACKGROUND = "#07070A"
 BLUE_ACCENT = "#25B8FF"

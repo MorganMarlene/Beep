@@ -2,11 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-08-01
-- Applies to: Spotlight Version 0.1
+- Applies to: BEEP Version 0.1
 
 ## Context
 
-Spotlight is a local Windows desktop application. Version 0.1 has one narrow workflow: select a video, inspect it, extract audio, transcribe it locally, display timestamped segments, and persist project data.
+BEEP is a local Windows desktop application. Version 0.1 has one narrow workflow: select a video, inspect it, extract audio, transcribe it locally, display timestamped segments, and persist project data.
 
 The application interacts with several distinct technologies—PySide6, ffprobe, FFmpeg, faster-whisper, and SQLite—but it does not need independent services, network APIs, distributed workers, or a generalized processing platform.
 
@@ -14,7 +14,7 @@ The broader product may eventually gain additional content-analysis and video-ed
 
 ## Decision
 
-Spotlight Version 0.1 will be implemented as a small modular monolith.
+BEEP Version 0.1 will be implemented as a small modular monolith.
 
 It will run as one desktop application and maintain clear responsibility boundaries for:
 
@@ -55,7 +55,7 @@ Rejected for Version 0.1 because the additional packages, interfaces, and mappin
 
 ### Microservices or a local backend server
 
-Rejected because Spotlight runs on one computer and has no approved remote client or independently deployed service. This would add networking, lifecycle, packaging, and failure-handling complexity.
+Rejected because BEEP runs on one computer and has no approved remote client or independently deployed service. This would add networking, lifecycle, packaging, and failure-handling complexity.
 
 ### General-purpose process and job system
 
@@ -68,4 +68,3 @@ Rejected because it would couple UI behavior to subprocesses, inference, and dat
 ## Guardrail
 
 This decision does not approve future feature scaffolding. New modules, abstractions, or dependencies must support an existing Version 0.1 requirement unless a later milestone is explicitly approved.
-
