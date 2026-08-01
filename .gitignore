@@ -15,6 +15,11 @@ dist/
 
 # Local configuration and IDEs
 .env
+.env.*
+!.env.example
+*.local.json
+*.local.toml
+config.local.*
 .idea/
 .vscode/
 
@@ -27,6 +32,8 @@ dist/
 logs/
 models/
 temp/
+transcripts/
+exports/
 
 # Video and derived media belong outside the repository
 *.avi
@@ -38,4 +45,3 @@ temp/
 *.mp4
 *.wav
 *.webm
-

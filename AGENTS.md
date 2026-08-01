@@ -23,3 +23,17 @@ Version 0.1 is limited to local video selection, ffprobe metadata display, FFmpe
 
 Twitch downloading, Ollama, AI clip scoring, automatic clipping, vertical rendering, captions, face detection, subject tracking, platform exports, automatic posting, and complex worker systems are not approved.
 
+## Completed feature Git workflow
+
+For every completed feature:
+
+1. Run pytest.
+2. Run Ruff lint.
+3. Run Ruff formatting check.
+4. Run Pyright.
+5. Do not commit if validation fails.
+6. Create a clear Conventional Commit message.
+7. Commit only files related to the approved feature.
+8. Push the completed commit to `origin/main`.
+9. Never commit local media, models, databases, transcripts, exports, caches, temporary files, secrets, or `.venv`.
+10. Report the commit hash and push result.
