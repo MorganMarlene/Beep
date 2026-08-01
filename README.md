@@ -132,3 +132,7 @@ using local clip analysis. Keep downloaded models and generated media outside Gi
 - `docs/development-roadmap.md` defines the approved implementation sequence.
 - `docs/decisions/ADR-0001-modular-monolith.md` records the initial architectural decision.
 - `AGENTS.md` contains mandatory instructions for coding agents.
+
+## License
+
+BEEP is released under the MIT License. See `LICENSE` for the full license text.
