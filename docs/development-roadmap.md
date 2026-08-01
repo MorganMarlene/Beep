@@ -103,8 +103,6 @@ Completion means Version 0.1 satisfies every acceptance criterion below without 
 The following work has no approved implementation milestone:
 
 - Twitch downloading
-- Ollama integration
-- AI highlight or clip scoring
 - Automatic clip creation
 - Vertical video rendering
 - Video captions
@@ -114,3 +112,11 @@ The following work has no approved implementation milestone:
 - Automatic posting
 
 Adding any of these items requires explicit scope approval and a roadmap update first.
+
+## Approved extension: local clip candidate detection
+
+The `add-ai-clip-detection` OpenSpec change approves a small post-transcription
+workflow that uses local Ollama inference to generate, validate, deduplicate, rank,
+and display explainable clip candidates. Candidate state is session-only. This
+approval does not include visual analysis, candidate persistence, playback,
+editing, rendering, exporting, scheduling, or posting.

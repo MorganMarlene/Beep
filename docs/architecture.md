@@ -182,4 +182,15 @@ A very small generated media fixture may be used for focused FFmpeg integration 
 
 ## Deferred architecture
 
-No components for downloading, clip scoring, editing, rendering, captions, computer vision, publishing, or Ollama should be added in Version 0.1. Future milestones may extend the modular monolith after their behavior is explicitly approved.
+The approved `add-ai-clip-detection` change extends the modular monolith with one
+local transcript-analysis module and the existing Qt background-task pattern.
+Ollama is the sole AI inference runtime and is accessed only through its loopback
+HTTP API. Transcript batches overlap, model segment ranges are validated against
+source segments, timestamps are derived deterministically, and compatible
+boundary candidates may merge to preserve story setup through payoff. Candidates
+remain in application memory and are never written to SQLite in this version.
+
+Downloading, automatic clipping, editing, rendering, captions, computer vision,
+playback, exporting, scheduling, and publishing remain deferred. Transcript-only
+analysis cannot claim detection of facial reactions, menus, loading screens, or
+other visual-only evidence.

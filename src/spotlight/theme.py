@@ -111,6 +111,17 @@ QPushButton#TranscribeButton:hover {{
     border-color: #FF73C5;
 }}
 
+QPushButton#AnalyzeButton {{
+    background-color: transparent;
+    border-color: {BLUE_ACCENT};
+    color: {BLUE_ACCENT};
+}}
+
+QPushButton#AnalyzeButton:hover {{
+    background-color: #102A3A;
+    color: #FFFFFF;
+}}
+
 QPushButton#CpuButton {{
     background-color: transparent;
     border-color: {PINK_ACCENT};
@@ -128,6 +139,26 @@ QPlainTextEdit {{
 
 QPlainTextEdit:focus {{
     border-color: {BLUE_ACCENT};
+}}
+
+QListWidget {{
+    background-color: #09090E;
+    color: #DDE2F2;
+    border: 1px solid #2B2D40;
+    border-radius: 7px;
+    padding: 6px;
+    outline: none;
+}}
+
+QListWidget::item {{
+    min-height: 48px;
+    padding: 8px;
+    border-bottom: 1px solid #202230;
+}}
+
+QListWidget::item:selected {{
+    background-color: #174D6B;
+    color: #FFFFFF;
 }}
 
 QLineEdit {{

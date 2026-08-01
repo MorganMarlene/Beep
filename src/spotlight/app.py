@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
@@ -22,6 +23,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from spotlight.clip_detection import (
+    ClipAnalysisError,
+    ClipAnalysisResult,
+    ClipCandidate,
+    analyze_transcript,
+)
 from spotlight.media import MediaProbeError, VideoMetadata, probe_video
 from spotlight.theme import DARK_STYLESHEET
 from spotlight.transcription import (
@@ -103,6 +110,33 @@ class TranscriptionTask(QRunnable):
             self.signals.succeeded.emit(result)
 
 
+class ClipAnalysisSignals(QObject):
+    """Signals emitted by a background local clip-analysis task."""
+
+    progressed = Signal(int, str)
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+
+class ClipAnalysisTask(QRunnable):
+    """Analyze an immutable transcript away from the UI thread."""
+
+    def __init__(self, segments: tuple[TranscriptSegment, ...]) -> None:
+        super().__init__()
+        self.segments = segments
+        self.signals = ClipAnalysisSignals()
+
+    @Slot()
+    def run(self) -> None:
+        """Run local Ollama analysis and report its result to the UI."""
+        try:
+            result = analyze_transcript(self.segments, self.signals.progressed.emit)
+        except ClipAnalysisError as error:
+            self.signals.failed.emit(str(error))
+        else:
+            self.signals.succeeded.emit(result)
+
+
 class SpotlightWindow(QMainWindow):
     """Main application window for selecting a local video."""
 
@@ -151,6 +185,19 @@ class SpotlightWindow(QMainWindow):
         self.next_match_button.setObjectName("SearchNavigationButton")
         self.next_match_button.setEnabled(False)
         self.next_match_button.clicked.connect(self.select_next_match)
+        self.analyze_clips_button = QPushButton("Analyze Clips")
+        self.analyze_clips_button.setObjectName("AnalyzeButton")
+        self.analyze_clips_button.setEnabled(False)
+        self.analyze_clips_button.clicked.connect(self.start_clip_analysis)
+        self.candidate_list = QListWidget()
+        self.candidate_list.setObjectName("CandidateList")
+        self.candidate_list.setMinimumWidth(340)
+        self.candidate_list.currentRowChanged.connect(self.display_candidate_details)
+        self.candidate_details = QPlainTextEdit()
+        self.candidate_details.setReadOnly(True)
+        self.candidate_details.setPlaceholderText(
+            "Select a ranked candidate to review its signals and weaknesses."
+        )
         self.device_value = self._create_status_value("—")
         self.model_value = self._create_status_value("—")
         self.time_value = self._create_status_value("—")
@@ -161,6 +208,7 @@ class SpotlightWindow(QMainWindow):
         self._video_path: Path | None = None
         self._video_duration = 0.0
         self.transcript_segments: list[TranscriptSegment] = []
+        self.clip_candidates: list[ClipCandidate] = []
         self._match_indices: list[int] = []
         self._current_match_index: int | None = None
 
@@ -268,6 +316,7 @@ class SpotlightWindow(QMainWindow):
         transcript_header.addWidget(transcript_title)
         transcript_header.addStretch()
         transcript_header.addWidget(self.use_cpu_button)
+        transcript_header.addWidget(self.analyze_clips_button)
         transcript_header.addWidget(self.transcribe_button)
         transcript_layout.addLayout(transcript_header)
         search_row = QHBoxLayout()
@@ -279,6 +328,21 @@ class SpotlightWindow(QMainWindow):
         transcript_layout.addLayout(search_row)
         transcript_layout.addWidget(self.transcript_panel, 1)
         layout.addWidget(transcript_card, 1)
+
+        candidate_card = QFrame()
+        candidate_card.setObjectName("Card")
+        candidate_layout = QVBoxLayout(candidate_card)
+        candidate_layout.setContentsMargins(20, 18, 20, 20)
+        candidate_layout.setSpacing(12)
+        candidate_title = QLabel("AI Clip Candidates")
+        candidate_title.setObjectName("SectionTitle")
+        candidate_layout.addWidget(candidate_title)
+        candidate_content = QHBoxLayout()
+        candidate_content.setSpacing(12)
+        candidate_content.addWidget(self.candidate_list, 1)
+        candidate_content.addWidget(self.candidate_details, 2)
+        candidate_layout.addLayout(candidate_content)
+        layout.addWidget(candidate_card, 1)
         return content
 
     def _build_status_area(self) -> QFrame:
@@ -334,6 +398,7 @@ class SpotlightWindow(QMainWindow):
         self._video_duration = 0.0
         self.transcribe_button.setEnabled(False)
         self.transcript_segments = []
+        self._clear_clip_candidates()
         self.search_box.clear()
         self.transcript_panel.clear()
         self.progress_label.setText("Ready")
@@ -408,8 +473,10 @@ class SpotlightWindow(QMainWindow):
 
         self.open_button.setEnabled(False)
         self.transcribe_button.setEnabled(False)
+        self.analyze_clips_button.setEnabled(False)
         self.transcript_panel.clear()
         self.search_box.clear()
+        self._clear_clip_candidates()
         self.progress_bar.setValue(0)
         self.progress_label.setText("Preparing transcription...")
         self._reset_runtime_diagnostics()
@@ -458,7 +525,102 @@ class SpotlightWindow(QMainWindow):
         self.cuda_source_value.setText(f"CUDA Libraries: {result.cuda_library_source}")
         self.open_button.setEnabled(True)
         self.transcribe_button.setEnabled(True)
+        self.analyze_clips_button.setEnabled(bool(self.transcript_segments))
         self.use_cpu_button.setVisible(False)
+
+    def _clear_clip_candidates(self) -> None:
+        """Discard session-only candidate state when the active source changes."""
+        self.clip_candidates = []
+        self.candidate_list.clear()
+        self.candidate_details.clear()
+        self.analyze_clips_button.setEnabled(False)
+
+    @Slot()
+    def start_clip_analysis(self) -> None:
+        """Start local Ollama transcript analysis in the Qt thread pool."""
+        if not self.transcript_segments:
+            return
+        self.analyze_clips_button.setEnabled(False)
+        self.open_button.setEnabled(False)
+        self.transcribe_button.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Preparing local clip analysis...")
+
+        task = ClipAnalysisTask(tuple(self.transcript_segments))
+        task.signals.progressed.connect(self.display_clip_analysis_progress)
+        task.signals.succeeded.connect(self.display_clip_analysis_result)
+        task.signals.failed.connect(self.display_clip_analysis_error)
+        QThreadPool.globalInstance().start(task)
+
+    @Slot(int, str)
+    def display_clip_analysis_progress(self, value: int, message: str) -> None:
+        """Display coarse local-analysis progress while the UI remains responsive."""
+        self.progress_bar.setValue(value)
+        self.progress_label.setText(message)
+
+    @Slot(object)
+    def display_clip_analysis_result(self, result: ClipAnalysisResult) -> None:
+        """Replace the current in-memory candidates after complete success."""
+        self.clip_candidates = list(result.candidates)
+        self.candidate_list.clear()
+        for rank, candidate in enumerate(self.clip_candidates, start=1):
+            self.candidate_list.addItem(
+                f"#{rank}  {candidate.score}/100  {candidate.clip_type}\n"
+                f"{format_timestamp(candidate.start_seconds)} - "
+                f"{format_timestamp(candidate.end_seconds)}  •  {candidate.summary}"
+            )
+        if self.clip_candidates:
+            self.candidate_list.setCurrentRow(0)
+        self.progress_bar.setValue(100)
+        self.progress_label.setText(
+            f"Clip analysis complete: {len(self.clip_candidates)} candidates."
+        )
+        self.device_value.setText("OLLAMA / LOCAL")
+        self.model_value.setText(result.model_name)
+        self.open_button.setEnabled(True)
+        self.transcribe_button.setEnabled(self._video_path is not None)
+        self.analyze_clips_button.setEnabled(bool(self.transcript_segments))
+
+    @Slot(str)
+    def display_clip_analysis_error(self, message: str) -> None:
+        """Restore controls after failure without replacing current candidates."""
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(f"Clip analysis error: {message}")
+        self.open_button.setEnabled(True)
+        self.transcribe_button.setEnabled(self._video_path is not None)
+        self.analyze_clips_button.setEnabled(bool(self.transcript_segments))
+
+    @Slot(int)
+    def display_candidate_details(self, row: int) -> None:
+        """Show every required explanation field for the selected candidate."""
+        if row < 0 or row >= len(self.clip_candidates):
+            self.candidate_details.clear()
+            return
+        candidate = self.clip_candidates[row]
+        signals = (
+            "\n".join(f"• {item}" for item in candidate.strong_signals) or "• None"
+        )
+        weaknesses = "\n".join(f"• {item}" for item in candidate.weaknesses) or "• None"
+        self.candidate_details.setPlainText(
+            "\n".join(
+                (
+                    f"Start: {format_timestamp(candidate.start_seconds)}",
+                    f"End: {format_timestamp(candidate.end_seconds)}",
+                    f"Clip Type: {candidate.clip_type}",
+                    f"Score: {candidate.score}/100",
+                    "",
+                    f"Summary: {candidate.summary}",
+                    "",
+                    f"Why BEEP selected it: {candidate.selection_reasoning}",
+                    "",
+                    "Strong Signals:",
+                    signals,
+                    "",
+                    "Weaknesses / Missing Context:",
+                    weaknesses,
+                )
+            )
+        )
 
     @Slot(str)
     def update_transcript_search(self, query: str) -> None:

@@ -54,9 +54,46 @@ These features require separate approval before implementation.
 7. Select a segment to inspect its start and end times.
 8. Close and reopen the application without losing the stored project and transcript.
 
+## Local AI clip detection
+
+After transcription, BEEP can use a local Ollama model to generate an explainable,
+ranked list of clip candidates. Version 1 analyzes transcript text only, keeps
+candidate results in memory for the current session, and never sends prompts or
+content to a remote AI service.
+
+Each candidate includes source-derived timestamps, clip type, score, summary,
+selection reasoning, strong signals, and weaknesses or missing context. BEEP does
+not claim that transcript analysis detected facial reactions, menus, loading
+screens, or other visual-only events. Playback, editing, exporting, scheduling,
+and posting remain out of scope.
+
+### Ollama setup on Windows
+
+1. Download and run the official `OllamaSetup.exe` from
+   https://ollama.com/download/windows. The installer runs Ollama in the
+   background and adds `ollama` to the user PATH.
+2. Open a new PowerShell window and download the default local model:
+
+   ```powershell
+   ollama pull qwen2.5:7b
+   ```
+
+3. Verify the runtime and model:
+
+   ```powershell
+   ollama list
+   ollama run qwen2.5:7b "Reply with OK"
+   ```
+
+BEEP connects only to Ollama's loopback endpoint at `127.0.0.1:11434`. To select
+another locally installed Ollama model for a session, set `BEEP_OLLAMA_MODEL`
+before launching BEEP. No Ollama Python SDK or other AI runtime is required.
+
 ## Installation status
 
-Application code and installation instructions have not yet been created. When implementation begins, all Windows prerequisites—including Python, FFmpeg, and the selected faster-whisper model—must be documented with clear verification steps.
+Install the Python environment with `uv sync`, configure FFmpeg and faster-whisper
+as described by the application errors, and follow the Ollama steps above before
+using local clip analysis. Keep downloaded models and generated media outside Git.
 
 ## Project documentation
 
