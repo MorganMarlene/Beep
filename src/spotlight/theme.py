@@ -45,6 +45,15 @@ QLabel#SidebarTitle, QLabel#StatusCaption {{
     font-weight: 700;
 }}
 
+QLabel#ActiveProject {{
+    background-color: #101018;
+    color: {PINK_ACCENT};
+    border: 1px solid #27273A;
+    border-radius: 5px;
+    padding: 8px;
+    font-weight: 650;
+}}
+
 QFrame#ActiveNavigation {{
     background-color: #111827;
     border-left: 3px solid {BLUE_ACCENT};
@@ -111,6 +120,17 @@ QPushButton#TranscribeButton:hover {{
     border-color: #FF73C5;
 }}
 
+QPushButton#AnalyzeButton {{
+    background-color: transparent;
+    border-color: {BLUE_ACCENT};
+    color: {BLUE_ACCENT};
+}}
+
+QPushButton#AnalyzeButton:hover {{
+    background-color: #102A3A;
+    color: #FFFFFF;
+}}
+
 QPushButton#CpuButton {{
     background-color: transparent;
     border-color: {PINK_ACCENT};
@@ -128,6 +148,26 @@ QPlainTextEdit {{
 
 QPlainTextEdit:focus {{
     border-color: {BLUE_ACCENT};
+}}
+
+QListWidget {{
+    background-color: #09090E;
+    color: #DDE2F2;
+    border: 1px solid #2B2D40;
+    border-radius: 7px;
+    padding: 6px;
+    outline: none;
+}}
+
+QListWidget::item {{
+    min-height: 48px;
+    padding: 8px;
+    border-bottom: 1px solid #202230;
+}}
+
+QListWidget::item:selected {{
+    background-color: #174D6B;
+    color: #FFFFFF;
 }}
 
 QLineEdit {{
@@ -150,6 +190,37 @@ QPushButton#SearchNavigationButton {{
     background-color: transparent;
     border-color: #3A3D53;
     color: #DDE2F2;
+}}
+
+QPushButton#SidebarAction {{
+    min-height: 30px;
+    padding: 0 7px;
+    background-color: transparent;
+    border-color: #3A3D53;
+    color: #DDE2F2;
+    font-size: 8pt;
+}}
+
+QPushButton#SidebarAction:hover {{
+    border-color: {BLUE_ACCENT};
+    color: {BLUE_ACCENT};
+}}
+
+QListWidget#RecentProjects {{
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    font-size: 8pt;
+}}
+
+QListWidget#RecentProjects::item {{
+    min-height: 36px;
+    padding: 6px;
+    border-bottom: 1px solid #202230;
+}}
+
+QLabel#ErrorText {{
+    color: {PINK_ACCENT};
 }}
 
 QPushButton#SearchNavigationButton:hover {{

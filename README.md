@@ -54,9 +54,77 @@ These features require separate approval before implementation.
 7. Select a segment to inspect its start and end times.
 8. Close and reopen the application without losing the stored project and transcript.
 
+## Local AI clip detection
+
+After transcription, BEEP can use a local Ollama model to generate an explainable,
+ranked list of clip candidates. Version 1 analyzes transcript text only and never
+sends prompts or content to a remote AI service. Candidates belonging to a saved
+project are stored locally; results without a saved project remain in memory for
+the current session only.
+
+Each candidate includes source-derived timestamps, clip type, score, summary,
+selection reasoning, strong signals, and weaknesses or missing context. BEEP does
+not claim that transcript analysis detected facial reactions, menus, loading
+screens, or other visual-only events. Playback, editing, exporting, scheduling,
+and posting remain out of scope.
+
+### Ollama setup on Windows
+
+1. Download and run the official `OllamaSetup.exe` from
+   https://ollama.com/download/windows. The installer runs Ollama in the
+   background and adds `ollama` to the user PATH.
+2. Open a new PowerShell window and download the default local model:
+
+   ```powershell
+   ollama pull qwen2.5:7b
+   ```
+
+3. Verify the runtime and model:
+
+   ```powershell
+   ollama list
+   ollama run qwen2.5:7b "Reply with OK"
+   ```
+
+BEEP connects only to Ollama's loopback endpoint at `127.0.0.1:11434`. To select
+another locally installed Ollama model for a session, set `BEEP_OLLAMA_MODEL`
+before launching BEEP. No Ollama Python SDK or other AI runtime is required.
+
+## Local projects
+
+BEEP starts without automatically opening a project. Use **New Project** to create
+a project with a required project name and an optional **Brand name**, or use
+**Open Project** to restore existing work. Brand name is descriptive metadata on
+that project only; it is not a reusable profile.
+
+The sidebar shows the 10 most recent projects and the active project name. A saved
+project restores its VOD metadata, exact timestamped transcript, and validated AI
+clip candidates without rerunning ffprobe, faster-whisper, or Ollama.
+
+Project data is stored in local SQLite at:
+
+```text
+%LOCALAPPDATA%\BEEP\projects.sqlite3
+```
+
+SQLite contains structured data and the original VOD path only. BEEP never copies
+video or audio into the database. If a VOD is moved or deleted, BEEP restores the
+saved transcript and candidates, marks the source unavailable, and disables work
+that needs the media file. Version 1 does not search for or relink missing media.
+
+To back up projects, close BEEP and copy `projects.sqlite3` together with any
+adjacent `projects.sqlite3-wal` and `projects.sqlite3-shm` files if present. The
+database remains local and is ignored by Git.
+
+Project rename, deletion, duplication, search, pinning, relinking, automatic
+reopening, reusable profiles, Twitch importing, editing, exports, titles,
+descriptions, thumbnails, and posting are not part of this version.
+
 ## Installation status
 
-Application code and installation instructions have not yet been created. When implementation begins, all Windows prerequisites—including Python, FFmpeg, and the selected faster-whisper model—must be documented with clear verification steps.
+Install the Python environment with `uv sync`, configure FFmpeg and faster-whisper
+as described by the application errors, and follow the Ollama steps above before
+using local clip analysis. Keep downloaded models and generated media outside Git.
 
 ## Project documentation
 

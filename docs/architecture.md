@@ -104,31 +104,46 @@ Version 0.1 does not require word-level timestamps, diarization, summarization, 
 
 SQLite stores structured state. A small explicit data-access layer is preferred over an ORM for Version 0.1 unless implementation evidence shows an ORM materially reduces complexity.
 
-The minimum conceptual schema is:
+The local project schema version 1 is:
 
 ```text
 projects
 - id
+- name
+- brand_name (optional project metadata)
 - source_path
 - filename
+- file size and last-modified metadata
 - duration_seconds
 - width
 - height
 - frame_rate
-- status
+- video and audio codecs
+- bitrate
 - created_at
 - updated_at
+- last_opened_at
 
 transcript_segments
-- id
 - project_id
 - segment_index
 - start_seconds
 - end_seconds
 - text
+
+clip_candidates
+- project_id
+- rank
+- source segment and timestamp boundaries
+- clip type, score, summary, and selection reasoning
+- strong signals JSON text
+- weaknesses JSON text
 ```
 
-The database should enforce project ownership and transcript ordering with appropriate foreign-key, uniqueness, and index constraints. Schema creation and future migration behavior must be deterministic.
+The database enforces project ownership and ordering with foreign-key, uniqueness,
+check, and index constraints. A new database is created at schema version 1. An
+ordered migration boundary is retained for future approved versions, but there is
+no speculative legacy conversion because no earlier database format exists.
 
 Paths stored in SQLite should refer to media outside the Git repository. Source videos and model files are never copied into version control.
 
@@ -182,4 +197,23 @@ A very small generated media fixture may be used for focused FFmpeg integration 
 
 ## Deferred architecture
 
-No components for downloading, clip scoring, editing, rendering, captions, computer vision, publishing, or Ollama should be added in Version 0.1. Future milestones may extend the modular monolith after their behavior is explicitly approved.
+The approved `add-ai-clip-detection` change extends the modular monolith with one
+local transcript-analysis module and the existing Qt background-task pattern.
+Ollama is the sole AI inference runtime and is accessed only through its loopback
+HTTP API. Transcript batches overlap, model segment ranges are validated against
+source segments, timestamps are derived deterministically, and compatible
+boundary candidates may merge to preserve story setup through payoff. The
+`add-projects-system` change persists complete validated candidates for saved
+projects. Candidate results without a saved project remain session-only.
+
+Projects are complete typed snapshots loaded from one local SQLite database in
+the Windows per-user application-data directory. A snapshot contains project
+identity, optional project-specific Brand name, media path and metadata,
+timestamped transcript segments, and ranked candidates. Loading succeeds before
+the active UI changes. Missing media does not discard review data, and media bytes
+are never stored in SQLite.
+
+Downloading, automatic clipping, editing, rendering, captions, computer vision,
+playback, exporting, scheduling, and publishing remain deferred. Transcript-only
+analysis cannot claim detection of facial reactions, menus, loading screens, or
+other visual-only evidence.
