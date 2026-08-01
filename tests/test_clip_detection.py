@@ -1,11 +1,14 @@
 import json
 import urllib.error
+import urllib.request
 from unittest.mock import patch
 
 import pytest
 
 from spotlight.clip_detection import (
     OLLAMA_ENDPOINT,
+    OLLAMA_TAGS_ENDPOINT,
+    OLLAMA_VERSION_ENDPOINT,
     ClipAnalysisConfig,
     ClipAnalysisError,
     OllamaClient,
@@ -201,10 +204,8 @@ class FakeResponse:
         return json.dumps(self.body).encode()
 
 
-def test_ollama_adapter_uses_only_the_fixed_loopback_endpoint() -> None:
-    segments = [make_segment(0)]
-    batch = build_transcript_batches(segments)[0]
-    response_content = json.dumps(
+def valid_generate_content() -> str:
+    return json.dumps(
         {
             "candidates": [
                 {
@@ -220,26 +221,83 @@ def test_ollama_adapter_uses_only_the_fixed_loopback_endpoint() -> None:
             ]
         }
     )
-    captured_urls: list[str] = []
 
-    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
-        captured_urls.append(request.full_url)  # type: ignore[attr-defined]
+
+def test_health_check_detects_ollama_version_and_configured_model() -> None:
+    requested_urls: list[str] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        assert timeout == 10
+        if request.full_url == OLLAMA_VERSION_ENDPOINT:
+            return FakeResponse({"version": "0.32.5"})
+        return FakeResponse({"models": [{"name": "qwen2.5:7b"}]})
+
+    with patch("spotlight.clip_detection.urllib.request.urlopen", fake_urlopen):
+        status = OllamaClient(ClipAnalysisConfig()).check_health()
+
+    assert status.version == "0.32.5"
+    assert status.models == ("qwen2.5:7b",)
+    assert requested_urls == [OLLAMA_VERSION_ENDPOINT, OLLAMA_TAGS_ENDPOINT]
+
+
+def test_health_check_reports_models_when_configured_model_is_missing() -> None:
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> FakeResponse:
+        assert timeout == 10
+        if request.full_url == OLLAMA_VERSION_ENDPOINT:
+            return FakeResponse({"version": "0.32.5"})
+        return FakeResponse({"models": [{"model": "llama3.2:3b"}]})
+
+    with (
+        patch("spotlight.clip_detection.urllib.request.urlopen", fake_urlopen),
+        pytest.raises(ClipAnalysisError, match="Detected models: llama3.2:3b"),
+    ):
+        OllamaClient(ClipAnalysisConfig()).check_health()
+
+
+def test_ollama_adapter_uses_generate_with_0325_response_shape() -> None:
+    batch = build_transcript_batches([make_segment(0)])[0]
+    captured_payloads: list[dict[str, object]] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: int) -> FakeResponse:
+        if request.full_url == OLLAMA_VERSION_ENDPOINT:
+            return FakeResponse({"version": "0.32.5"})
+        if request.full_url == OLLAMA_TAGS_ENDPOINT:
+            return FakeResponse({"models": [{"name": "qwen2.5:7b"}]})
+        assert request.full_url == OLLAMA_ENDPOINT
         assert timeout == 180
-        return FakeResponse({"message": {"content": response_content}})
+        request_data = request.data
+        assert isinstance(request_data, bytes)
+        captured_payloads.append(json.loads(request_data.decode("utf-8")))
+        return FakeResponse(
+            {
+                "model": "qwen2.5:7b",
+                "response": valid_generate_content(),
+                "done": True,
+            }
+        )
 
     with patch("spotlight.clip_detection.urllib.request.urlopen", fake_urlopen):
         candidates = OllamaClient(ClipAnalysisConfig()).analyze_batch(batch)
 
     assert len(candidates) == 1
-    assert captured_urls == [OLLAMA_ENDPOINT]
+    assert captured_payloads[0]["model"] == "qwen2.5:7b"
+    assert captured_payloads[0]["stream"] is False
+    assert "prompt" in captured_payloads[0]
+    assert "system" in captured_payloads[0]
+    assert "messages" not in captured_payloads[0]
 
 
-def test_ollama_adapter_reports_local_runtime_failure() -> None:
-    batch = build_transcript_batches([make_segment(0)])[0]
-    failure = urllib.error.URLError("connection refused")
+def test_ollama_adapter_displays_real_connection_error() -> None:
+    failure = urllib.error.URLError("[WinError 10061] Connection refused")
 
     with (
         patch("spotlight.clip_detection.urllib.request.urlopen", side_effect=failure),
-        pytest.raises(ClipAnalysisError, match="not running locally"),
+        pytest.raises(ClipAnalysisError) as captured,
     ):
-        OllamaClient(ClipAnalysisConfig()).analyze_batch(batch)
+        OllamaClient(ClipAnalysisConfig()).check_health()
+
+    message = str(captured.value)
+    assert OLLAMA_VERSION_ENDPOINT in message
+    assert "[WinError 10061] Connection refused" in message
+    assert "not running" not in message

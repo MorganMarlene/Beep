@@ -1,6 +1,7 @@
 """Local transcript analysis for explainable clip candidates."""
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
@@ -12,7 +13,10 @@ from spotlight.transcription import TranscriptSegment
 
 ProgressCallback = Callable[[int, str], None]
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
-OLLAMA_ENDPOINT = "http://127.0.0.1:11434/api/chat"
+OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+OLLAMA_VERSION_ENDPOINT = f"{OLLAMA_BASE_URL}/api/version"
+OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_BASE_URL}/api/tags"
+OLLAMA_ENDPOINT = f"{OLLAMA_BASE_URL}/api/generate"
 DEFAULT_BATCH_CHARACTER_LIMIT = 12_000
 DEFAULT_BATCH_OVERLAP_SEGMENTS = 8
 MISSING_CONTEXT_PENALTY = 10
@@ -23,6 +27,7 @@ VISUAL_ONLY_TERMS = (
     "menu",
     "visual reaction",
 )
+LOGGER = logging.getLogger(__name__)
 
 
 class ClipAnalysisError(Exception):
@@ -98,6 +103,14 @@ class ClipAnalysisResult:
 
     candidates: tuple[ClipCandidate, ...]
     model_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaStatus:
+    """Live local Ollama version and installed model names."""
+
+    version: str
+    models: tuple[str, ...]
 
 
 OLLAMA_RESPONSE_SCHEMA: dict[str, Any] = {
@@ -281,23 +294,95 @@ def parse_raw_candidates(content: str) -> list[RawClipCandidate]:
 
 
 class OllamaClient:
-    """Small loopback-only adapter for Ollama structured chat responses."""
+    """Small loopback-only adapter for Ollama health and generation requests."""
 
     def __init__(self, config: ClipAnalysisConfig) -> None:
         self.config = config
+        self._status: OllamaStatus | None = None
+
+    @staticmethod
+    def _request_json(request: urllib.request.Request, timeout: int) -> Any:
+        """Run one local request while preserving useful transport diagnostics."""
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            raw_detail = error.read().decode("utf-8", errors="replace")
+            try:
+                parsed_detail: Any = json.loads(raw_detail)
+                detail = parsed_detail.get("error", raw_detail)
+            except json.JSONDecodeError:
+                detail = raw_detail
+            message = (
+                f"Ollama request to {request.full_url} failed with HTTP "
+                f"{error.code}: {detail or error.reason}"
+            )
+            LOGGER.error(message)
+            raise ClipAnalysisError(message) from error
+        except urllib.error.URLError as error:
+            message = (
+                f"Could not connect to Ollama at {request.full_url}: {error.reason!s}"
+            )
+            LOGGER.error(message, exc_info=True)
+            raise ClipAnalysisError(message) from error
+        except TimeoutError as error:
+            message = f"Ollama request to {request.full_url} timed out: {error}"
+            LOGGER.error(message, exc_info=True)
+            raise ClipAnalysisError(message) from error
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            message = f"Ollama returned an unreadable response from {request.full_url}."
+            LOGGER.error(message, exc_info=True)
+            raise ClipAnalysisError(message) from error
+
+    def check_health(self) -> OllamaStatus:
+        """Read local version and model tags, confirming the configured model."""
+        version_document = self._request_json(
+            urllib.request.Request(OLLAMA_VERSION_ENDPOINT, method="GET"),
+            timeout=10,
+        )
+        tags_document = self._request_json(
+            urllib.request.Request(OLLAMA_TAGS_ENDPOINT, method="GET"),
+            timeout=10,
+        )
+        try:
+            version = version_document["version"]
+            raw_models = tags_document["models"]
+            if not isinstance(version, str) or not isinstance(raw_models, list):
+                raise TypeError
+            models = tuple(
+                name
+                for item in raw_models
+                if isinstance(item, dict)
+                for name in (item.get("name") or item.get("model"),)
+                if isinstance(name, str)
+            )
+        except (KeyError, TypeError) as error:
+            raise ClipAnalysisError(
+                "Ollama returned an invalid response from /api/version or /api/tags."
+            ) from error
+        status = OllamaStatus(version=version, models=models)
+        if self.config.model_name not in status.models:
+            detected = ", ".join(status.models) or "none"
+            raise ClipAnalysisError(
+                f"Ollama {status.version} is running, but model "
+                f"'{self.config.model_name}' is not installed. Detected models: "
+                f"{detected}. Run 'ollama pull {self.config.model_name}'."
+            )
+        self._status = status
+        return status
 
     def analyze_batch(self, batch: TranscriptBatch) -> list[RawClipCandidate]:
         """Request candidate judgments for one transcript batch."""
+        if self._status is None:
+            self.check_health()
         payload = json.dumps(
             {
                 "model": self.config.model_name,
                 "stream": False,
                 "format": OLLAMA_RESPONSE_SCHEMA,
                 "options": {"temperature": 0},
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": build_user_prompt(batch)},
-                ],
+                "system": SYSTEM_PROMPT,
+                "prompt": build_user_prompt(batch),
             }
         ).encode("utf-8")
         request = urllib.request.Request(
@@ -306,37 +391,18 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        response_body = self._request_json(request, timeout=180)
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                response_body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            if error.code == 404 or "not found" in detail.casefold():
-                raise ClipAnalysisError(
-                    f"Ollama model '{self.config.model_name}' is not installed. Run "
-                    f"'ollama pull {self.config.model_name}' in PowerShell."
-                ) from error
-            raise ClipAnalysisError(
-                f"Ollama request failed: HTTP {error.code}."
-            ) from error
-        except (urllib.error.URLError, TimeoutError) as error:
-            raise ClipAnalysisError(
-                "Ollama is not running locally. Install Ollama, start it, and verify "
-                "'ollama list' works in PowerShell."
-            ) from error
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise ClipAnalysisError(
-                "Ollama returned an unreadable response."
-            ) from error
-
-        try:
-            content = response_body["message"]["content"]
+            content = response_body["response"]
+            done = response_body["done"]
         except (KeyError, TypeError) as error:
             raise ClipAnalysisError(
-                "Ollama returned an invalid chat response."
+                "Ollama returned an invalid /api/generate response."
             ) from error
-        if not isinstance(content, str):
-            raise ClipAnalysisError("Ollama returned an invalid chat response.")
+        if not isinstance(content, str) or done is not True:
+            raise ClipAnalysisError(
+                "Ollama returned an incomplete /api/generate response."
+            )
         return parse_raw_candidates(content)
 
 
