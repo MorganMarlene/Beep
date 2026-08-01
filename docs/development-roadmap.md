@@ -117,6 +117,20 @@ Adding any of these items requires explicit scope approval and a roadmap update 
 
 The `add-ai-clip-detection` OpenSpec change approves a small post-transcription
 workflow that uses local Ollama inference to generate, validate, deduplicate, rank,
-and display explainable clip candidates. Candidate state is session-only. This
-approval does not include visual analysis, candidate persistence, playback,
-editing, rendering, exporting, scheduling, or posting.
+and display explainable clip candidates. The later `add-projects-system` change
+supersedes the session-only lifecycle for saved projects while preserving
+in-memory-only results when no saved project owns them. This approval does not
+include visual analysis, playback, editing, rendering, exporting, scheduling, or
+posting.
+
+## Approved extension: local projects
+
+The `add-projects-system` OpenSpec change approves multiple local SQLite projects.
+Users can create and open projects, see the active project and 10 recent projects,
+and restore VOD metadata, timestamped transcripts, and validated clip candidates
+after restart. SQLite stores structured data and media paths only.
+
+Brand name is optional metadata on one project, not a reusable profile. Project
+rename, deletion, duplication, search, pinning, missing-media relinking, automatic
+reopening, Twitch importing, editing, exports, titles, descriptions, thumbnails,
+and posting remain deferred.

@@ -57,9 +57,10 @@ These features require separate approval before implementation.
 ## Local AI clip detection
 
 After transcription, BEEP can use a local Ollama model to generate an explainable,
-ranked list of clip candidates. Version 1 analyzes transcript text only, keeps
-candidate results in memory for the current session, and never sends prompts or
-content to a remote AI service.
+ranked list of clip candidates. Version 1 analyzes transcript text only and never
+sends prompts or content to a remote AI service. Candidates belonging to a saved
+project are stored locally; results without a saved project remain in memory for
+the current session only.
 
 Each candidate includes source-derived timestamps, clip type, score, summary,
 selection reasoning, strong signals, and weaknesses or missing context. BEEP does
@@ -88,6 +89,36 @@ and posting remain out of scope.
 BEEP connects only to Ollama's loopback endpoint at `127.0.0.1:11434`. To select
 another locally installed Ollama model for a session, set `BEEP_OLLAMA_MODEL`
 before launching BEEP. No Ollama Python SDK or other AI runtime is required.
+
+## Local projects
+
+BEEP starts without automatically opening a project. Use **New Project** to create
+a project with a required project name and an optional **Brand name**, or use
+**Open Project** to restore existing work. Brand name is descriptive metadata on
+that project only; it is not a reusable profile.
+
+The sidebar shows the 10 most recent projects and the active project name. A saved
+project restores its VOD metadata, exact timestamped transcript, and validated AI
+clip candidates without rerunning ffprobe, faster-whisper, or Ollama.
+
+Project data is stored in local SQLite at:
+
+```text
+%LOCALAPPDATA%\BEEP\projects.sqlite3
+```
+
+SQLite contains structured data and the original VOD path only. BEEP never copies
+video or audio into the database. If a VOD is moved or deleted, BEEP restores the
+saved transcript and candidates, marks the source unavailable, and disables work
+that needs the media file. Version 1 does not search for or relink missing media.
+
+To back up projects, close BEEP and copy `projects.sqlite3` together with any
+adjacent `projects.sqlite3-wal` and `projects.sqlite3-shm` files if present. The
+database remains local and is ignored by Git.
+
+Project rename, deletion, duplication, search, pinning, relinking, automatic
+reopening, reusable profiles, Twitch importing, editing, exports, titles,
+descriptions, thumbnails, and posting are not part of this version.
 
 ## Installation status
 
