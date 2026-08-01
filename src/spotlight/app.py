@@ -5,16 +5,19 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtGui import QColor, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -132,6 +135,20 @@ class SpotlightWindow(QMainWindow):
         self.transcript_panel.setPlaceholderText(
             "Your timestamped transcript will appear here."
         )
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search transcript...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self.update_transcript_search)
+        self.match_count_label = QLabel("0 matches")
+        self.match_count_label.setObjectName("MutedText")
+        self.previous_match_button = QPushButton("Previous Match")
+        self.previous_match_button.setObjectName("SearchNavigationButton")
+        self.previous_match_button.setEnabled(False)
+        self.previous_match_button.clicked.connect(self.select_previous_match)
+        self.next_match_button = QPushButton("Next Match")
+        self.next_match_button.setObjectName("SearchNavigationButton")
+        self.next_match_button.setEnabled(False)
+        self.next_match_button.clicked.connect(self.select_next_match)
         self.device_value = self._create_status_value("—")
         self.model_value = self._create_status_value("—")
         self.time_value = self._create_status_value("—")
@@ -142,6 +159,8 @@ class SpotlightWindow(QMainWindow):
         self._video_path: Path | None = None
         self._video_duration = 0.0
         self.transcript_segments: list[TranscriptSegment] = []
+        self._match_indices: list[int] = []
+        self._current_match_index: int | None = None
 
         root = QWidget()
         root.setObjectName("AppRoot")
@@ -249,6 +268,13 @@ class SpotlightWindow(QMainWindow):
         transcript_header.addWidget(self.use_cpu_button)
         transcript_header.addWidget(self.transcribe_button)
         transcript_layout.addLayout(transcript_header)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        search_row.addWidget(self.search_box, 1)
+        search_row.addWidget(self.match_count_label)
+        search_row.addWidget(self.previous_match_button)
+        search_row.addWidget(self.next_match_button)
+        transcript_layout.addLayout(search_row)
         transcript_layout.addWidget(self.transcript_panel, 1)
         layout.addWidget(transcript_card, 1)
         return content
@@ -306,6 +332,7 @@ class SpotlightWindow(QMainWindow):
         self._video_duration = 0.0
         self.transcribe_button.setEnabled(False)
         self.transcript_segments = []
+        self.search_box.clear()
         self.transcript_panel.clear()
         self.progress_label.setText("Ready")
         self.progress_bar.setValue(0)
@@ -380,6 +407,7 @@ class SpotlightWindow(QMainWindow):
         self.open_button.setEnabled(False)
         self.transcribe_button.setEnabled(False)
         self.transcript_panel.clear()
+        self.search_box.clear()
         self.progress_bar.setValue(0)
         self.progress_label.setText("Preparing transcription...")
         self._reset_runtime_diagnostics()
@@ -418,6 +446,7 @@ class SpotlightWindow(QMainWindow):
                 for segment in result.segments
             )
         )
+        self.update_transcript_search(self.search_box.text())
         self.progress_bar.setValue(100)
         elapsed_time = format_elapsed_time(result.elapsed_seconds)
         self.progress_label.setText("Transcription complete.")
@@ -428,6 +457,71 @@ class SpotlightWindow(QMainWindow):
         self.open_button.setEnabled(True)
         self.transcribe_button.setEnabled(True)
         self.use_cpu_button.setVisible(False)
+
+    @Slot(str)
+    def update_transcript_search(self, query: str) -> None:
+        """Highlight transcript segments matching the current search query."""
+        self._match_indices = find_matching_segment_indices(
+            self.transcript_segments, query
+        )
+        self._current_match_index = None
+        has_query = bool(query)
+        has_matches = bool(self._match_indices)
+
+        if not has_query:
+            self.match_count_label.setText("0 matches")
+        elif has_matches:
+            count = len(self._match_indices)
+            noun = "match" if count == 1 else "matches"
+            self.match_count_label.setText(f"{count} {noun}")
+        else:
+            self.match_count_label.setText("No matches")
+
+        self.previous_match_button.setEnabled(has_matches)
+        self.next_match_button.setEnabled(has_matches)
+        self._apply_match_highlights()
+
+    @Slot()
+    def select_next_match(self) -> None:
+        """Select and scroll to the next matching transcript segment."""
+        self._select_match(1)
+
+    @Slot()
+    def select_previous_match(self) -> None:
+        """Select and scroll to the previous matching transcript segment."""
+        self._select_match(-1)
+
+    def _select_match(self, direction: int) -> None:
+        selected_index = navigate_match(
+            self._match_indices, self._current_match_index, direction
+        )
+        if selected_index is None:
+            return
+
+        self._current_match_index = selected_index
+        self._apply_match_highlights()
+        block = self.transcript_panel.document().findBlockByNumber(selected_index)
+        cursor = QTextCursor(block)
+        self.transcript_panel.setTextCursor(cursor)
+        self.transcript_panel.centerCursor()
+
+    def _apply_match_highlights(self) -> None:
+        selections: list[QTextEdit.ExtraSelection] = []
+        document = self.transcript_panel.document()
+        for segment_index in self._match_indices:
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = QTextCursor(document.findBlockByNumber(segment_index))
+            selection.cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            color = (
+                "#174D6B" if segment_index == self._current_match_index else "#5A1741"
+            )
+            selection.format.setBackground(QColor(color))
+            selection.format.setProperty(
+                QTextFormat.Property.FullWidthSelection,
+                True,
+            )
+            selections.append(selection)
+        self.transcript_panel.setExtraSelections(selections)
 
     @Slot(str)
     def display_transcription_error(self, message: str) -> None:
@@ -454,6 +548,33 @@ def format_timestamp(seconds: float) -> str:
     whole_minutes, remaining_seconds = divmod(seconds, 60)
     hours, minutes = divmod(int(whole_minutes), 60)
     return f"{hours:02d}:{minutes:02d}:{remaining_seconds:06.3f}"
+
+
+def find_matching_segment_indices(
+    segments: list[TranscriptSegment], query: str
+) -> list[int]:
+    """Return segment indices whose text contains a case-insensitive query."""
+    if not query:
+        return []
+    normalized_query = query.casefold()
+    return [
+        index
+        for index, segment in enumerate(segments)
+        if normalized_query in segment.text.casefold()
+    ]
+
+
+def navigate_match(
+    match_indices: list[int], current_index: int | None, direction: int
+) -> int | None:
+    """Move through matching segment indices, wrapping at either end."""
+    if not match_indices:
+        return None
+    if current_index not in match_indices:
+        return match_indices[0] if direction >= 0 else match_indices[-1]
+    position = match_indices.index(current_index)
+    step = 1 if direction >= 0 else -1
+    return match_indices[(position + step) % len(match_indices)]
 
 
 def format_elapsed_time(seconds: float) -> str:
