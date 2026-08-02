@@ -25,6 +25,7 @@ from spotlight.playback import (
     position_from_timeline_value,
     timeline_value_from_position,
 )
+from spotlight.theme import PLAYER_PANE_PERCENT, SPACE_1, SPACE_2, SPACE_3
 
 
 class TimelineSlider(QSlider):
@@ -97,6 +98,7 @@ class TranscriptView(QPlainTextEdit):
 
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("TranscriptView")
         self.setReadOnly(True)
         self.setAccessibleName("Timestamped transcript")
         self.setAccessibleDescription(
@@ -142,7 +144,7 @@ class VideoWorkspace(QWidget):
         self.setObjectName("VideoWorkspace")
         self.video_output = QVideoWidget()
         self.video_output.setObjectName("VideoOutput")
-        self.video_output.setMinimumSize(360, 260)
+        self.video_output.setMinimumSize(384, 216)
         self.video_output.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.video_output.setAccessibleName("Active project video")
         self.video_output.setAccessibleDescription(
@@ -174,57 +176,74 @@ class VideoWorkspace(QWidget):
         self.playback_message.setWordWrap(True)
         self.playback_message.setAccessibleName("Playback information")
 
-        player_card = self._build_player_card()
-        left_pane = QWidget()
-        left_layout = QVBoxLayout(left_pane)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(14)
-        left_layout.addWidget(player_card, 4)
-        left_layout.addWidget(video_details, 1)
+        self.player_card = self._build_player_card()
+        self.left_pane = QWidget()
+        self.left_layout = QVBoxLayout(self.left_pane)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.setSpacing(SPACE_2)
+        self.left_layout.addWidget(self.player_card, 6)
+        self.left_layout.addWidget(video_details, 1)
+        self.video_details = video_details
 
-        review_splitter = QSplitter(Qt.Orientation.Vertical)
-        review_splitter.setObjectName("ReviewSplitter")
-        review_splitter.setChildrenCollapsible(False)
-        review_splitter.addWidget(transcript_panel)
-        review_splitter.addWidget(candidate_panel)
-        review_splitter.setStretchFactor(0, 3)
-        review_splitter.setStretchFactor(1, 2)
-        review_splitter.setSizes([560, 360])
+        self.review_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.review_splitter.setObjectName("ReviewSplitter")
+        self.review_splitter.setChildrenCollapsible(False)
+        self.review_splitter.addWidget(transcript_panel)
+        self.review_splitter.addWidget(candidate_panel)
+        self.review_splitter.setStretchFactor(0, 3)
+        self.review_splitter.setStretchFactor(1, 2)
+        self.review_splitter.setSizes([560, 360])
 
         self.primary_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.primary_splitter.setObjectName("WorkspaceSplitter")
         self.primary_splitter.setChildrenCollapsible(False)
-        self.primary_splitter.addWidget(left_pane)
-        self.primary_splitter.addWidget(review_splitter)
-        self.primary_splitter.setStretchFactor(0, 2)
-        self.primary_splitter.setStretchFactor(1, 1)
-        self.primary_splitter.setSizes([1280, 680])
+        self.primary_splitter.addWidget(self.left_pane)
+        self.primary_splitter.addWidget(self.review_splitter)
+        self.primary_splitter.setStretchFactor(0, 13)
+        self.primary_splitter.setStretchFactor(1, 7)
+        self.primary_splitter.setSizes([1280, 720])
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.addWidget(self.primary_splitter)
+        self.workspace_layout = QVBoxLayout(self)
+        self.workspace_layout.setContentsMargins(SPACE_3, SPACE_2, SPACE_3, SPACE_2)
+        self.workspace_layout.addWidget(self.primary_splitter)
 
     def _build_player_card(self) -> QFrame:
         card = QFrame()
-        card.setObjectName("Card")
+        card.setObjectName("PlayerCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(10)
+        layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        layout.setSpacing(SPACE_1)
 
         title = QLabel("Video Review")
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
         layout.addWidget(self.video_output, 1)
         layout.addWidget(self.playback_message)
+        layout.addWidget(self.timeline)
 
         controls = QHBoxLayout()
-        controls.setSpacing(10)
+        controls.setSpacing(SPACE_2)
         controls.addWidget(self.play_pause_button)
-        controls.addWidget(self.timeline, 1)
         controls.addWidget(self.time_label)
+        controls.addStretch()
         controls.addWidget(self.seeking_label)
         layout.addLayout(controls)
         return card
+
+    def apply_density(self, *, expanded: bool, workspace_width: int) -> None:
+        """Adapt presentation geometry without rebuilding stateful widgets."""
+        margin = SPACE_3 if expanded else SPACE_2
+        self.workspace_layout.setContentsMargins(margin, SPACE_2, margin, SPACE_2)
+        self.left_layout.setSpacing(SPACE_2 if expanded else SPACE_1)
+        self.video_details.setMaximumHeight(160 if expanded else 136)
+        if expanded:
+            self.video_output.setMinimumSize(480, 272)
+        else:
+            self.video_output.setMinimumSize(384, 216)
+
+        usable_width = max(800, workspace_width - (margin * 2))
+        player_width = round(usable_width * PLAYER_PANE_PERCENT / 100)
+        self.primary_splitter.setSizes([player_width, usable_width - player_width])
 
     def set_clock_snapshot(self, snapshot: PlaybackClockSnapshot) -> None:
         """Reflect clock state without emitting another seek."""

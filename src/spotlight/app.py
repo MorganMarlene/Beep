@@ -2,10 +2,19 @@
 
 import sys
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QColor, QFont, QTextCursor, QTextFormat
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QFont,
+    QResizeEvent,
+    QTextBlockFormat,
+    QTextCursor,
+    QTextFormat,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -23,6 +32,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -53,7 +63,28 @@ from spotlight.projects import (
     StoredVideo,
     default_database_path,
 )
-from spotlight.theme import DARK_STYLESHEET
+from spotlight.theme import (
+    BLUE_ACCENT,
+    BODY_POINT_SIZE,
+    DARK_STYLESHEET,
+    EXPANDED_BREAKPOINT,
+    HEADER_COMPACT_HEIGHT,
+    HEADER_EXPANDED_HEIGHT,
+    NARROW_REVIEW_BREAKPOINT,
+    PINK_ACCENT,
+    SECTION_POINT_SIZE,
+    SIDEBAR_COMPACT_WIDTH,
+    SIDEBAR_EXPANDED_MAX,
+    SIDEBAR_EXPANDED_MIN,
+    SPACE_1,
+    SPACE_2,
+    SPACE_3,
+    SPACE_4,
+    GradientWordmark,
+    MotionController,
+    StatusLabel,
+    classify_status,
+)
 from spotlight.transcription import (
     CudaRuntimeUnavailableError,
     TranscriptionError,
@@ -253,52 +284,71 @@ class SpotlightWindow(QMainWindow):
         self.repository = repository
         self.active_project: ProjectSummary | None = None
         self.setWindowTitle(APPLICATION_NAME)
-        self.setMinimumSize(960, 700)
+        self.setMinimumSize(1120, 720)
         self.setStyleSheet(DARK_STYLESHEET)
+        self.motion = MotionController()
+        self._responsive_mode: tuple[bool, bool] | None = None
+        self._status_kind = "neutral"
 
         self.open_button = QPushButton("Open Video...")
+        self.open_button.setObjectName("ProcessingAction")
+        self.open_button.setAccessibleName("Open a local video")
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self.open_video)
 
         self.new_project_button = QPushButton("New Project")
         self.new_project_button.setObjectName("SidebarAction")
+        self.new_project_button.setAccessibleName("Create a new project")
         self.new_project_button.clicked.connect(self.show_new_project_dialog)
         self.open_project_button = QPushButton("Open Project")
         self.open_project_button.setObjectName("SidebarAction")
+        self.open_project_button.setAccessibleName("Open an existing project")
         self.open_project_button.clicked.connect(self.show_open_project_dialog)
         self.active_project_value = QLabel("No active project")
         self.active_project_value.setObjectName("ActiveProject")
         self.active_project_value.setWordWrap(True)
+        self.active_project_value.setAccessibleName("Active project")
         self.recent_projects_list = QListWidget()
         self.recent_projects_list.setObjectName("RecentProjects")
+        self.recent_projects_list.setAccessibleName("Recent projects")
         self.recent_projects_list.itemActivated.connect(self.open_recent_project)
 
         self.info_panel = QPlainTextEdit()
+        self.info_panel.setObjectName("VideoDetails")
         self.info_panel.setReadOnly(True)
-        self.info_panel.setPlaceholderText("Open a video to view its details.")
-        self.info_panel.setMaximumHeight(190)
+        self.info_panel.setPlaceholderText(
+            "No VOD loaded. Use Open Video after creating or opening a project."
+        )
+        self.info_panel.setAccessibleName("Video details")
+        self.info_panel.setMaximumHeight(160)
         self.transcribe_button = QPushButton("Transcribe")
         self.transcribe_button.setObjectName("TranscribeButton")
+        self.transcribe_button.setAccessibleName("Transcribe the active video")
         self.transcribe_button.setEnabled(False)
         self.transcribe_button.clicked.connect(self.start_transcription)
         self.use_cpu_button = QPushButton("Use CPU Instead")
         self.use_cpu_button.setObjectName("CpuButton")
+        self.use_cpu_button.setAccessibleName("Retry transcription using the CPU")
         self.use_cpu_button.setVisible(False)
         self.use_cpu_button.clicked.connect(self.start_cpu_transcription)
-        self.progress_label = QLabel("Ready")
+        self.progress_label = StatusLabel("Ready")
         self.progress_label.setObjectName("StatusValue")
+        self.progress_label.setAccessibleName("Current operation status")
         self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setAccessibleName("Current operation progress")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.transcript_panel = TranscriptView()
         self.transcript_panel.setPlaceholderText(
-            "Your timestamped transcript will appear here."
+            "No transcript yet. Transcribe the active VOD to begin review."
         )
         self.transcript_panel.timestamp_activated.connect(
             self.seek_to_transcript_segment
         )
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search transcript...")
+        self.search_box.setAccessibleName("Search transcript")
         self.search_box.setClearButtonEnabled(True)
         self.search_box.textChanged.connect(self.update_transcript_search)
         self.match_count_label = QLabel("0 matches")
@@ -313,18 +363,24 @@ class SpotlightWindow(QMainWindow):
         self.next_match_button.clicked.connect(self.select_next_match)
         self.analyze_clips_button = QPushButton("Analyze Clips")
         self.analyze_clips_button.setObjectName("AnalyzeButton")
+        self.analyze_clips_button.setAccessibleName(
+            "Analyze the transcript for clip candidates"
+        )
         self.analyze_clips_button.setEnabled(False)
         self.analyze_clips_button.clicked.connect(self.start_clip_analysis)
         self.candidate_list = QListWidget()
         self.candidate_list.setObjectName("CandidateList")
-        self.candidate_list.setMinimumWidth(340)
+        self.candidate_list.setAccessibleName("Ranked AI clip candidates")
+        self.candidate_list.setMinimumWidth(280)
         self.candidate_list.currentRowChanged.connect(self.display_candidate_details)
         self.candidate_list.itemClicked.connect(self.seek_to_candidate)
         self.candidate_list.itemActivated.connect(self.seek_to_candidate)
-        self.candidate_details = QPlainTextEdit()
+        self.candidate_details = QTextEdit()
+        self.candidate_details.setObjectName("CandidateDetails")
         self.candidate_details.setReadOnly(True)
+        self.candidate_details.setAccessibleName("Selected clip candidate details")
         self.candidate_details.setPlaceholderText(
-            "Select a ranked candidate to review its signals and weaknesses."
+            "No candidate selected. Analyze a transcript, then choose a ranked moment."
         )
         self.device_value = self._create_status_value("—")
         self.model_value = self._create_status_value("—")
@@ -362,18 +418,23 @@ class SpotlightWindow(QMainWindow):
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        root_layout.addWidget(self._build_header())
+        self.header = self._build_header()
+        root_layout.addWidget(self.header)
 
-        workspace = QWidget()
-        workspace_layout = QHBoxLayout(workspace)
-        workspace_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_layout.setSpacing(0)
-        workspace_layout.addWidget(self._build_sidebar())
-        workspace_layout.addWidget(self._build_main_content(), 1)
-        root_layout.addWidget(workspace, 1)
-        root_layout.addWidget(self._build_status_area())
+        self.workspace_container = QWidget()
+        self.workspace_layout = QHBoxLayout(self.workspace_container)
+        self.workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.workspace_layout.setSpacing(0)
+        self.sidebar = self._build_sidebar()
+        self.main_content = self._build_main_content()
+        self.workspace_layout.addWidget(self.sidebar)
+        self.workspace_layout.addWidget(self.main_content, 1)
+        root_layout.addWidget(self.workspace_container, 1)
+        self.status_area = self._build_status_area()
+        root_layout.addWidget(self.status_area)
 
         self.setCentralWidget(root)
+        self._configure_focus_order()
         self.playback_adapter = playback_adapter or QtPlaybackAdapter(
             self.video_workspace.video_output
         )
@@ -386,7 +447,9 @@ class SpotlightWindow(QMainWindow):
         self.playback_backend_value.setText(
             f"Playback: {self.playback_adapter.diagnostics}"
         )
-        self.resize(1180, 820)
+        self.resize(1600, 960)
+        self._apply_responsive_layout(force=True)
+        self._update_status_presentation(self.progress_label.text(), animate=False)
         self.refresh_recent_projects()
 
     @staticmethod
@@ -395,65 +458,130 @@ class SpotlightWindow(QMainWindow):
         value.setObjectName("StatusValue")
         return value
 
+    @staticmethod
+    def _build_future_region(text: str, accessible_name: str) -> QFrame:
+        """Create non-interactive presentation capacity for deferred features."""
+        region = QFrame()
+        region.setObjectName("FutureSidebarRegion")
+        region.setProperty("futureFeature", True)
+        region.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        region.setAccessibleName(accessible_name)
+        layout = QHBoxLayout(region)
+        layout.setContentsMargins(SPACE_1, SPACE_1, SPACE_1, SPACE_1)
+        label = QLabel(text)
+        label.setObjectName("FutureLabel")
+        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        layout.addWidget(label)
+        return region
+
     def _build_header(self) -> QFrame:
         header = QFrame()
         header.setObjectName("Header")
-        header.setFixedHeight(78)
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(28, 0, 28, 0)
+        layout.setContentsMargins(SPACE_4, 0, SPACE_4, 0)
+        layout.setSpacing(SPACE_3)
 
-        brand = QLabel("BE")
-        brand.setObjectName("Brand")
-        brand_accent = QLabel("EP")
-        brand_accent.setObjectName("BrandAccent")
-        layout.addWidget(brand)
-        layout.addWidget(brand_accent)
+        self.wordmark = GradientWordmark()
+        layout.addWidget(self.wordmark)
+
+        divider = QFrame()
+        divider.setObjectName("HeaderDivider")
+        divider.setFixedHeight(40)
+        layout.addWidget(divider)
+
+        context = QVBoxLayout()
+        context.setSpacing(0)
+        context_caption = QLabel("ACTIVE PROJECT")
+        context_caption.setObjectName("HeaderCaption")
+        self.header_project_value = QLabel("No active project")
+        self.header_project_value.setObjectName("HeaderProject")
+        self.header_project_value.setAccessibleName("Active project in header")
+        context.addWidget(context_caption)
+        context.addWidget(self.header_project_value)
+        layout.addLayout(context)
         layout.addStretch()
 
-        milestone = QLabel("LOCAL TRANSCRIPTION  /  VERSION 0.1")
-        milestone.setObjectName("Eyebrow")
-        layout.addWidget(milestone)
+        self.future_profile_region = self._build_future_region(
+            "PROFILE SELECTOR  ·  FUTURE",
+            "Reserved presentation space for a future profile selector",
+        )
+        self.future_profile_region.setObjectName("FutureHeaderRegion")
+        self.future_notification_region = self._build_future_region(
+            "NOTIFICATIONS  ·  FUTURE",
+            "Reserved presentation space for future notifications",
+        )
+        self.future_notification_region.setObjectName("FutureHeaderRegion")
+        layout.addWidget(self.future_profile_region)
+        layout.addWidget(self.future_notification_region)
         return header
 
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(210)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(22, 28, 18, 22)
-        layout.setSpacing(14)
+        layout.setContentsMargins(SPACE_3, SPACE_3, SPACE_2, SPACE_2)
+        layout.setSpacing(SPACE_2)
 
-        title = QLabel("WORKSPACE")
+        title = QLabel("PROJECTS")
         title.setObjectName("SidebarTitle")
         layout.addWidget(title)
-
-        active_item = QFrame()
-        active_item.setObjectName("ActiveNavigation")
-        active_layout = QHBoxLayout(active_item)
-        active_layout.setContentsMargins(14, 11, 12, 11)
-        active_label = QLabel("Transcription")
-        active_label.setObjectName("ActiveNavigationText")
-        active_layout.addWidget(active_label)
-        layout.addWidget(active_item)
-
-        project_title = QLabel("PROJECTS")
-        project_title.setObjectName("SidebarTitle")
-        layout.addWidget(project_title)
         layout.addWidget(self.active_project_value)
         project_actions = QHBoxLayout()
-        project_actions.setSpacing(6)
+        project_actions.setSpacing(SPACE_1)
         project_actions.addWidget(self.new_project_button)
         project_actions.addWidget(self.open_project_button)
         layout.addLayout(project_actions)
 
+        self.future_folder_region = self._build_future_region(
+            "FOLDER TREE  ·  FUTURE",
+            "Reserved presentation space for a future project folder tree",
+        )
+        layout.addWidget(self.future_folder_region)
+
         recent_title = QLabel("RECENT")
-        recent_title.setObjectName("SidebarTitle")
+        recent_title.setObjectName("SidebarEyebrow")
         layout.addWidget(recent_title)
         layout.addWidget(self.recent_projects_list, 1)
-        layout.addStretch()
 
-        local_label = QLabel("●  LOCAL PROCESSING")
-        local_label.setObjectName("Eyebrow")
+        processing_title = QLabel("PROCESSING")
+        processing_title.setObjectName("SidebarTitle")
+        layout.addWidget(processing_title)
+        layout.addWidget(self.open_button)
+        layout.addWidget(self.transcribe_button)
+        layout.addWidget(self.analyze_clips_button)
+        layout.addWidget(self.use_cpu_button)
+
+        self.future_process_action_region = self._build_future_region(
+            "PROCESS VOD SLOT  ·  FUTURE",
+            "Reserved presentation space for a future Process VOD action",
+        )
+        self.future_processing_queue_region = self._build_future_region(
+            "PROCESSING QUEUE  ·  FUTURE",
+            "Reserved presentation space for a future processing queue",
+        )
+        layout.addWidget(self.future_process_action_region)
+        layout.addWidget(self.future_processing_queue_region)
+
+        review_title = QLabel("REVIEW")
+        review_title.setObjectName("SidebarTitle")
+        layout.addWidget(review_title)
+        active_item = QFrame()
+        active_item.setObjectName("ActiveNavigation")
+        active_layout = QHBoxLayout(active_item)
+        active_layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
+        active_label = QLabel("Video workspace")
+        active_label.setObjectName("ActiveNavigationText")
+        active_layout.addWidget(active_label)
+        layout.addWidget(active_item)
+
+        self.future_publishing_region = self._build_future_region(
+            "PUBLISHING QUEUE  ·  FUTURE",
+            "Reserved presentation space for a future publishing queue",
+        )
+        layout.addWidget(self.future_publishing_region)
+
+        local_label = QLabel("●  LOCAL-ONLY WORKSPACE")
+        local_label.setObjectName("SidebarEyebrow")
         layout.addWidget(local_label)
         return sidebar
 
@@ -461,33 +589,29 @@ class SpotlightWindow(QMainWindow):
         video_card = QFrame()
         video_card.setObjectName("Card")
         video_layout = QVBoxLayout(video_card)
-        video_layout.setContentsMargins(20, 18, 20, 20)
-        video_layout.setSpacing(12)
-        video_header = QHBoxLayout()
-        video_title = QLabel("Video Details")
+        video_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        video_layout.setSpacing(SPACE_1)
+        video_title = QLabel("Source Details")
         video_title.setObjectName("SectionTitle")
-        video_header.addWidget(video_title)
-        video_header.addStretch()
-        video_header.addWidget(self.open_button)
-        video_layout.addLayout(video_header)
+        video_layout.addWidget(video_title)
         video_layout.addWidget(self.info_panel)
 
         transcript_card = QFrame()
         transcript_card.setObjectName("Card")
         transcript_layout = QVBoxLayout(transcript_card)
-        transcript_layout.setContentsMargins(20, 18, 20, 20)
-        transcript_layout.setSpacing(12)
+        transcript_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        transcript_layout.setSpacing(SPACE_1)
         transcript_header = QHBoxLayout()
         transcript_title = QLabel("Transcript")
         transcript_title.setObjectName("SectionTitle")
         transcript_header.addWidget(transcript_title)
         transcript_header.addStretch()
-        transcript_header.addWidget(self.use_cpu_button)
-        transcript_header.addWidget(self.analyze_clips_button)
-        transcript_header.addWidget(self.transcribe_button)
+        transcript_hint = QLabel("Activate a timestamp to seek")
+        transcript_hint.setObjectName("MutedText")
+        transcript_header.addWidget(transcript_hint)
         transcript_layout.addLayout(transcript_header)
         search_row = QHBoxLayout()
-        search_row.setSpacing(8)
+        search_row.setSpacing(SPACE_1)
         search_row.addWidget(self.search_box, 1)
         search_row.addWidget(self.match_count_label)
         search_row.addWidget(self.previous_match_button)
@@ -498,16 +622,27 @@ class SpotlightWindow(QMainWindow):
         candidate_card = QFrame()
         candidate_card.setObjectName("Card")
         candidate_layout = QVBoxLayout(candidate_card)
-        candidate_layout.setContentsMargins(20, 18, 20, 20)
-        candidate_layout.setSpacing(12)
+        candidate_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        candidate_layout.setSpacing(SPACE_1)
         candidate_title = QLabel("AI Clip Candidates")
         candidate_title.setObjectName("SectionTitle")
         candidate_layout.addWidget(candidate_title)
-        candidate_content = QHBoxLayout()
-        candidate_content.setSpacing(12)
-        candidate_content.addWidget(self.candidate_list, 1)
-        candidate_content.addWidget(self.candidate_details, 2)
-        candidate_layout.addLayout(candidate_content)
+        self.candidate_empty_label = QLabel(
+            "No candidates yet. Transcribe the VOD, then run Analyze Clips."
+        )
+        self.candidate_empty_label.setObjectName("MutedText")
+        self.candidate_empty_label.setWordWrap(True)
+        self.candidate_empty_label.setAccessibleName("Clip candidate empty state")
+        candidate_layout.addWidget(self.candidate_empty_label)
+        self.candidate_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.candidate_splitter.setObjectName("CandidateSplitter")
+        self.candidate_splitter.setChildrenCollapsible(False)
+        self.candidate_splitter.addWidget(self.candidate_list)
+        self.candidate_splitter.addWidget(self.candidate_details)
+        self.candidate_splitter.setStretchFactor(0, 2)
+        self.candidate_splitter.setStretchFactor(1, 3)
+        self.candidate_splitter.setSizes([320, 480])
+        candidate_layout.addWidget(self.candidate_splitter, 1)
 
         self.video_workspace = VideoWorkspace(
             video_card,
@@ -520,16 +655,27 @@ class SpotlightWindow(QMainWindow):
         status = QFrame()
         status.setObjectName("StatusBar")
         layout = QVBoxLayout(status)
-        layout.setContentsMargins(24, 12, 24, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(SPACE_3, SPACE_1, SPACE_3, SPACE_1)
+        layout.setSpacing(SPACE_1)
 
-        progress_row = QHBoxLayout()
-        progress_row.addWidget(self.progress_label, 1)
-        progress_row.addWidget(self.progress_bar, 2)
-        layout.addLayout(progress_row)
+        self.status_activity = QFrame()
+        self.status_activity.setObjectName("StatusActivity")
+        self.status_activity.setProperty("statusKind", "neutral")
+        self.status_activity.setAccessibleName("Current application status")
+        activity_layout = QHBoxLayout(self.status_activity)
+        activity_layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
+        activity_layout.setSpacing(SPACE_2)
+        self.status_glyph = QLabel("READY")
+        self.status_glyph.setObjectName("StatusGlyph")
+        self.status_glyph.setProperty("statusKind", "neutral")
+        self.status_glyph.setAccessibleName("Status category")
+        activity_layout.addWidget(self.status_glyph)
+        activity_layout.addWidget(self.progress_label, 2)
+        activity_layout.addWidget(self.progress_bar, 3)
+        layout.addWidget(self.status_activity)
 
         metrics = QHBoxLayout()
-        metrics.setSpacing(28)
+        metrics.setSpacing(SPACE_4)
         for caption, value in (
             ("DEVICE", self.device_value),
             ("MODEL", self.model_value),
@@ -539,14 +685,118 @@ class SpotlightWindow(QMainWindow):
             metric.setSpacing(2)
             label = QLabel(caption)
             label.setObjectName("StatusCaption")
+            value.setAccessibleName(caption.title())
             metric.addWidget(label)
             metric.addWidget(value)
             metrics.addLayout(metric)
         metrics.addStretch()
+        diagnostics = QVBoxLayout()
+        diagnostics.setSpacing(0)
+        diagnostics.addWidget(self.cuda_source_value)
+        diagnostics.addWidget(self.playback_backend_value)
+        metrics.addLayout(diagnostics, 2)
         layout.addLayout(metrics)
-        layout.addWidget(self.cuda_source_value)
-        layout.addWidget(self.playback_backend_value)
+        self.progress_label.status_changed.connect(self._update_status_presentation)
         return status
+
+    def _apply_responsive_layout(self, *, force: bool = False) -> None:
+        """Apply compact or expanded presentation without recreating UI state."""
+        expanded = self.width() >= EXPANDED_BREAKPOINT
+        narrow_review = self.width() < NARROW_REVIEW_BREAKPOINT
+        mode = (expanded, narrow_review)
+        if not force and mode == self._responsive_mode:
+            return
+        self._responsive_mode = mode
+
+        if expanded:
+            proposed_width = round((self.width() * 0.11) / SPACE_1) * SPACE_1
+            sidebar_width = max(
+                SIDEBAR_EXPANDED_MIN,
+                min(proposed_width, SIDEBAR_EXPANDED_MAX),
+            )
+            header_height = HEADER_EXPANDED_HEIGHT
+        else:
+            sidebar_width = SIDEBAR_COMPACT_WIDTH
+            header_height = HEADER_COMPACT_HEIGHT
+
+        self.sidebar.setFixedWidth(sidebar_width)
+        self.header.setFixedHeight(header_height)
+        for region in (
+            self.future_profile_region,
+            self.future_notification_region,
+            self.future_folder_region,
+            self.future_process_action_region,
+            self.future_processing_queue_region,
+            self.future_publishing_region,
+        ):
+            region.setVisible(expanded)
+
+        self.candidate_splitter.setOrientation(
+            Qt.Orientation.Vertical if narrow_review else Qt.Orientation.Horizontal
+        )
+        self.candidate_list.setMinimumWidth(0 if narrow_review else 280)
+        self.video_workspace.apply_density(
+            expanded=expanded,
+            workspace_width=max(800, self.width() - sidebar_width),
+        )
+        self.setProperty("densityMode", "expanded" if expanded else "compact")
+
+    def _configure_focus_order(self) -> None:
+        """Keep keyboard navigation aligned with the visible creator workflow."""
+        ordered_controls = (
+            self.new_project_button,
+            self.open_project_button,
+            self.recent_projects_list,
+            self.open_button,
+            self.transcribe_button,
+            self.analyze_clips_button,
+            self.use_cpu_button,
+            self.video_workspace.play_pause_button,
+            self.video_workspace.timeline,
+            self.search_box,
+            self.previous_match_button,
+            self.next_match_button,
+            self.transcript_panel,
+            self.candidate_list,
+            self.candidate_details,
+        )
+        for current, following in zip(ordered_controls, ordered_controls[1:]):
+            self.setTabOrder(current, following)
+
+    @Slot(str)
+    def _update_status_presentation(
+        self, message: str, *, animate: bool = True
+    ) -> None:
+        """Reflect existing status copy with accessible, non-color-only styling."""
+        kind = classify_status(message)
+        changed_kind = kind != self._status_kind
+        self._status_kind = kind
+        glyphs = {
+            "neutral": "STATUS",
+            "active": "WORKING",
+            "success": "READY",
+            "error": "ERROR",
+        }
+        self.status_glyph.setText(glyphs[kind])
+        self.status_activity.setProperty("statusKind", kind)
+        self.status_glyph.setProperty("statusKind", kind)
+        self.status_activity.setAccessibleDescription(f"{glyphs[kind]}. {message}")
+        self.progress_bar.setAccessibleDescription(
+            f"{message} {self.progress_bar.value()} percent."
+        )
+        if changed_kind:
+            for widget in (self.status_activity, self.status_glyph):
+                style = widget.style()
+                style.unpolish(widget)
+                style.polish(widget)
+            if animate and self.isVisible():
+                self.motion.fade_in(self.status_activity)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Switch responsive density only when a named threshold is crossed."""
+        super().resizeEvent(event)
+        if hasattr(self, "video_workspace"):
+            self._apply_responsive_layout()
 
     @Slot()
     def show_new_project_dialog(self) -> None:
@@ -647,6 +897,7 @@ class SpotlightWindow(QMainWindow):
     def _activate_project(self, project: ProjectSummary) -> None:
         self.active_project = project
         self.active_project_value.setText(project.name)
+        self.header_project_value.setText(project.name)
         self.open_button.setEnabled(True)
 
     def _set_project_switching_enabled(self, enabled: bool) -> None:
@@ -668,7 +919,9 @@ class SpotlightWindow(QMainWindow):
         self._last_modified_at = ""
         self._file_details = ""
         self.info_panel.clear()
-        self.info_panel.setPlaceholderText("Open a video to view its details.")
+        self.info_panel.setPlaceholderText(
+            "No VOD loaded. Use Open Video after creating or opening a project."
+        )
         self.transcript_segments = []
         self._transcript_start_seconds = ()
         self.transcript_panel.clear()
@@ -851,6 +1104,7 @@ class SpotlightWindow(QMainWindow):
     def _show_transcript(
         self, segments: tuple[TranscriptSegment, ...] | list[TranscriptSegment]
     ) -> None:
+        had_transcript = bool(self.transcript_segments)
         self.transcript_segments = remove_exact_duplicate_segments(segments)
         self._transcript_start_seconds = tuple(
             segment.start_seconds for segment in self.transcript_segments
@@ -863,11 +1117,27 @@ class SpotlightWindow(QMainWindow):
                 for segment in self.transcript_segments
             )
         )
+        self._apply_transcript_readability()
         self.update_transcript_search(self.search_box.text())
+        if self.transcript_segments and not had_transcript and self.isVisible():
+            self.motion.fade_in(self.transcript_panel)
+
+    def _apply_transcript_readability(self) -> None:
+        """Apply Body-level type and optical block spacing without changing text."""
+        font = QFont(self.transcript_panel.font())
+        font.setPointSize(BODY_POINT_SIZE)
+        self.transcript_panel.setFont(font)
+        cursor = QTextCursor(self.transcript_panel.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        block_format = QTextBlockFormat()
+        block_format.setBottomMargin(4)
+        cursor.mergeBlockFormat(block_format)
+        cursor.clearSelection()
 
     def _show_clip_candidates(
         self, candidates: tuple[ClipCandidate, ...] | list[ClipCandidate]
     ) -> None:
+        had_candidates = bool(self.clip_candidates)
         self.clip_candidates = list(candidates)
         self._active_candidate_index = None
         self.candidate_list.clear()
@@ -886,8 +1156,11 @@ class SpotlightWindow(QMainWindow):
                 f"{format_timestamp(candidate.start_seconds)}",
             )
             self.candidate_list.addItem(item)
+        self.candidate_empty_label.setVisible(not self.clip_candidates)
         if self.clip_candidates:
             self.candidate_list.setCurrentRow(0)
+            if not had_candidates and self.isVisible():
+                self.motion.fade_in(self.candidate_splitter)
 
     def _reset_runtime_diagnostics(self) -> None:
         self.device_value.setText("—")
@@ -1126,6 +1399,7 @@ class SpotlightWindow(QMainWindow):
         self._active_candidate_index = None
         self.candidate_list.clear()
         self.candidate_details.clear()
+        self.candidate_empty_label.setVisible(True)
         self.analyze_clips_button.setEnabled(False)
 
     @Slot()
@@ -1209,29 +1483,35 @@ class SpotlightWindow(QMainWindow):
             self.candidate_details.clear()
             return
         candidate = self.clip_candidates[row]
-        signals = (
-            "\n".join(f"• {item}" for item in candidate.strong_signals) or "• None"
+        signals = candidate.strong_signals or ("None",)
+        weaknesses = candidate.weaknesses or ("None",)
+        signal_items = "".join(f"<li>{escape(item)}</li>" for item in signals)
+        weakness_items = "".join(f"<li>{escape(item)}</li>" for item in weaknesses)
+        self.candidate_details.setHtml(
+            f"""
+            <div style="font-family:'Segoe UI'; font-size:{BODY_POINT_SIZE}pt;
+                        color:#E1E6F0; line-height:1.45;">
+              <div style="font-size:{SECTION_POINT_SIZE}pt; font-weight:650;
+                          color:{PINK_ACCENT}; margin-bottom:8px;">
+                {escape(candidate.clip_type)} &nbsp; · &nbsp; {candidate.score}/100
+              </div>
+              <p><b>Start:</b> {format_timestamp(candidate.start_seconds)}<br>
+                 <b>End:</b> {format_timestamp(candidate.end_seconds)}<br>
+                 <b>Clip Type:</b> {escape(candidate.clip_type)}<br>
+                 <b>Score:</b> {candidate.score}/100</p>
+              <p><b style="color:{BLUE_ACCENT};">Summary:</b><br>
+                 {escape(candidate.summary)}</p>
+              <p><b style="color:{BLUE_ACCENT};">Why BEEP selected it:</b><br>
+                 {escape(candidate.selection_reasoning)}</p>
+              <p><b>Strong Signals:</b></p><ul>{signal_items}</ul>
+              <p><b>Weaknesses / Missing Context:</b></p>
+              <ul>{weakness_items}</ul>
+            </div>
+            """
         )
-        weaknesses = "\n".join(f"• {item}" for item in candidate.weaknesses) or "• None"
-        self.candidate_details.setPlainText(
-            "\n".join(
-                (
-                    f"Start: {format_timestamp(candidate.start_seconds)}",
-                    f"End: {format_timestamp(candidate.end_seconds)}",
-                    f"Clip Type: {candidate.clip_type}",
-                    f"Score: {candidate.score}/100",
-                    "",
-                    f"Summary: {candidate.summary}",
-                    "",
-                    f"Why BEEP selected it: {candidate.selection_reasoning}",
-                    "",
-                    "Strong Signals:",
-                    signals,
-                    "",
-                    "Weaknesses / Missing Context:",
-                    weaknesses,
-                )
-            )
+        self.candidate_details.setAccessibleDescription(
+            f"Selected {candidate.clip_type} candidate, score {candidate.score} "
+            "out of 100."
         )
 
     @Slot(str)
