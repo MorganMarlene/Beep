@@ -11,7 +11,7 @@ from pathlib import Path
 
 from spotlight.clip_detection import ClipCandidate
 from spotlight.media import VideoMetadata
-from spotlight.transcription import TranscriptSegment
+from spotlight.transcription import TranscriptSegment, remove_exact_duplicate_segments
 
 SCHEMA_VERSION = 1
 RECENT_PROJECT_LIMIT = 10
@@ -367,12 +367,16 @@ class ProjectRepository:
                 ),
             )
         transcript = tuple(
-            TranscriptSegment(
-                start_seconds=float(row["start_seconds"]),
-                end_seconds=float(row["end_seconds"]),
-                text=str(row["text"]),
+            remove_exact_duplicate_segments(
+                tuple(
+                    TranscriptSegment(
+                        start_seconds=float(row["start_seconds"]),
+                        end_seconds=float(row["end_seconds"]),
+                        text=str(row["text"]),
+                    )
+                    for row in transcript_rows
+                )
             )
-            for row in transcript_rows
         )
         candidates = tuple(
             ClipCandidate(
@@ -463,7 +467,7 @@ class ProjectRepository:
         timestamp = _utc_now()
         rows = tuple(
             (project_id, index, item.start_seconds, item.end_seconds, item.text)
-            for index, item in enumerate(segments)
+            for index, item in enumerate(remove_exact_duplicate_segments(segments))
         )
         try:
             with self._connect() as connection:

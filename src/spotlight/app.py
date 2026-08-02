@@ -59,6 +59,7 @@ from spotlight.transcription import (
     TranscriptionError,
     TranscriptionResult,
     TranscriptSegment,
+    remove_exact_duplicate_segments,
     transcribe_video,
 )
 from spotlight.video_workspace import TranscriptView, VideoWorkspace
@@ -850,16 +851,16 @@ class SpotlightWindow(QMainWindow):
     def _show_transcript(
         self, segments: tuple[TranscriptSegment, ...] | list[TranscriptSegment]
     ) -> None:
-        self.transcript_segments = list(segments)
+        self.transcript_segments = remove_exact_duplicate_segments(segments)
         self._transcript_start_seconds = tuple(
-            segment.start_seconds for segment in segments
+            segment.start_seconds for segment in self.transcript_segments
         )
         self._active_transcript_index = None
         self.transcript_panel.setPlainText(
             "\n".join(
                 f"[{format_timestamp(segment.start_seconds)} - "
                 f"{format_timestamp(segment.end_seconds)}] {segment.text}"
-                for segment in segments
+                for segment in self.transcript_segments
             )
         )
         self.update_transcript_search(self.search_box.text())
@@ -1153,10 +1154,14 @@ class SpotlightWindow(QMainWindow):
 
     @Slot(object)
     def display_clip_analysis_result(self, result: ClipAnalysisResult) -> None:
-        """Show complete results and persist them only for a saved project."""
+        """Show results and persist only a complete saved-project result."""
         self._show_clip_candidates(result.candidates)
         persistence_error: ProjectStorageError | None = None
-        if self.repository is not None and self.active_project is not None:
+        if (
+            not result.batch_failures
+            and self.repository is not None
+            and self.active_project is not None
+        ):
             try:
                 self.repository.replace_candidates(
                     self.active_project.project_id, result.candidates
@@ -1164,7 +1169,12 @@ class SpotlightWindow(QMainWindow):
             except ProjectStorageError as error:
                 persistence_error = error
         self.progress_bar.setValue(100)
-        if persistence_error is None:
+        if result.batch_failures:
+            self.progress_label.setText(
+                f"Partial clip analysis: {len(self.clip_candidates)} validated "
+                "candidates kept in memory. " + " ".join(result.batch_failures)
+            )
+        elif persistence_error is None:
             suffix = " and saved" if self.active_project is not None else ""
             self.progress_label.setText(
                 f"Clip analysis complete{suffix}: "

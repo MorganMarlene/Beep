@@ -12,6 +12,8 @@ Creators currently have to leave BEEP to verify transcript context and AI clip c
 - Keep player position, timeline, transcript, and candidate selection synchronized, including an active transcript-section highlight.
 - Preserve the active project indicator, restored project media paths, transcripts, candidates, GPU transcription, and local Ollama clip detection.
 - Require exact transcript evidence for every AI candidate, generate factual English summaries and reasons from that evidence, and rank for explicit viral signals instead of generic dialogue.
+- Prevent faster-whisper repetition loops, remove only exact duplicate transcript records, and preserve repeated speech that has distinct timestamps.
+- Use smaller configurable Ollama batches and request timeouts, retaining validated partial results in memory when a later batch fails.
 - Use a responsive 1440p-first layout that remains usable at 1080p and scales cleanly at 4K.
 - Keep all playback local. This version does not add editing, trimming, exporting, captions, vertical rendering, publishing, Twitch integration, or new persistence behavior.
 
@@ -24,10 +26,11 @@ Creators currently have to leave BEEP to verify transcript context and AI clip c
 ### Modified Capabilities
 
 - `clip-candidate-ranking`: Require grounded English output and deterministic viral-signal prioritization while preserving project persistence and local-only Ollama inference.
+- `project-management`: Restore each exact timestamped transcript segment once while preserving legitimately repeated speech at different timestamps.
 
 ## Impact
 
 - Affects the PySide6 main workspace, transcript presentation, candidate interaction, playback state coordination, and UI tests.
 - Introduces use of PySide6's local multimedia facilities and requires Windows packaging/runtime verification for the selected Qt multimedia backend and supported codecs.
-- Does not change the SQLite schema, persisted candidate shape, transcription device selection, Ollama runtime, or media files.
+- Does not change the SQLite schema, persisted candidate shape, transcription device selection, Ollama runtime, or media files. Partial analysis never replaces the last complete saved candidate set.
 - Requires small local media fixtures or controllable playback test doubles; large VODs remain outside Git.

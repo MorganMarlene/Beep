@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -72,6 +72,21 @@ class TranscriptionResult:
     model_name: str
     elapsed_seconds: float
     cuda_library_source: str
+
+
+def remove_exact_duplicate_segments(
+    segments: Sequence[TranscriptSegment],
+) -> list[TranscriptSegment]:
+    """Remove repeated segment records without collapsing repeated speech."""
+    unique: list[TranscriptSegment] = []
+    seen: set[tuple[float, float, str]] = set()
+    for segment in segments:
+        identity = (segment.start_seconds, segment.end_seconds, segment.text)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(segment)
+    return unique
 
 
 def detect_packaged_cuda_dll_directories(
@@ -274,7 +289,11 @@ def transcribe_audio(
                 device=compute.device,
                 compute_type=compute.compute_type,
             )
-        raw_segments, _ = model.transcribe(str(audio_path))
+        raw_segments, _ = model.transcribe(
+            str(audio_path),
+            condition_on_previous_text=False,
+            vad_filter=True,
+        )
 
         segments: list[TranscriptSegment] = []
         for raw_segment in raw_segments:
@@ -288,7 +307,7 @@ def transcribe_audio(
             )
             fraction = min(float(segment.end) / max(duration_seconds, 1.0), 1.0)
             progress(25 + int(fraction * 74), "Transcribing audio...")
-        return segments, compute
+        return remove_exact_duplicate_segments(segments), compute
     except TranscriptionError:
         raise
     except Exception as error:

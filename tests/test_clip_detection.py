@@ -78,6 +78,21 @@ def test_empty_transcript_has_no_batches() -> None:
     assert build_transcript_batches([]) == []
 
 
+def test_environment_configures_smaller_batches_and_request_timeout() -> None:
+    with patch.dict(
+        "spotlight.clip_detection.os.environ",
+        {
+            "BEEP_OLLAMA_BATCH_CHARACTER_LIMIT": "2500",
+            "BEEP_OLLAMA_REQUEST_TIMEOUT_SECONDS": "900",
+        },
+        clear=True,
+    ):
+        config = ClipAnalysisConfig.from_environment()
+
+    assert config.batch_character_limit == 2500
+    assert config.request_timeout_seconds == 900
+
+
 def test_candidate_parser_keeps_valid_items_and_rejects_invalid_items() -> None:
     valid = {
         "start_segment": 0,
@@ -299,6 +314,34 @@ def test_analysis_is_in_memory_and_repeatable_with_a_local_test_double() -> None
     assert progress_updates[-1] == 100
 
 
+def test_later_batch_timeout_preserves_validated_partial_candidates() -> None:
+    segments = [make_segment(index) for index in range(6)]
+    calls = 0
+    progress_messages: list[str] = []
+
+    def local_analyzer(batch: object) -> list[RawClipCandidate]:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ClipAnalysisError("Ollama /api/generate timed out")
+        if calls == 1:
+            return [make_raw(0, 0)]
+        return []
+
+    result = analyze_transcript(
+        segments,
+        lambda _value, message: progress_messages.append(message),
+        config=ClipAnalysisConfig(batch_character_limit=80, batch_overlap_segments=1),
+        analyze_batch=local_analyzer,
+    )
+
+    assert len(result.candidates) == 1
+    assert result.batch_failures == (
+        "Batch 2 of 5 failed: Ollama /api/generate timed out",
+    )
+    assert any("Batch 2 of 5 failed" in message for message in progress_messages)
+
+
 class FakeResponse:
     def __init__(self, body: dict[str, object]) -> None:
         self.body = body
@@ -375,7 +418,7 @@ def test_ollama_adapter_uses_generate_with_0325_response_shape() -> None:
         if request.full_url == OLLAMA_TAGS_ENDPOINT:
             return FakeResponse({"models": [{"name": "qwen2.5:7b"}]})
         assert request.full_url == OLLAMA_ENDPOINT
-        assert timeout == 180
+        assert timeout == 600
         request_data = request.data
         assert isinstance(request_data, bytes)
         captured_payloads.append(json.loads(request_data.decode("utf-8")))

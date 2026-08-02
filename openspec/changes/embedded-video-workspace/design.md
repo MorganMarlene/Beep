@@ -127,6 +127,12 @@ Ollama returns source segment indices, fixed English clip/signal/weakness labels
 
 Final ranking is deterministic and does not merely trust model confidence. Signal weights prioritize transcript-supported humor, laughter, excitement, screaming, surprise, emotional reactions, arguments, memorable quotes, unexpected events, impressive gameplay, failures, clutch moments, community moments, and story setup/payoff. Explicit music-only, silence, repetition, low-energy, filler, uncertain menu/loading, and missing-context weaknesses reduce the score. Candidates without an allowed positive signal or an exact in-range evidence quote are rejected as generic or ungrounded dialogue. Ollama remains the sole, local inference runtime and the persisted `ClipCandidate` shape does not change.
 
+### 13. Prevent transcription loops and recover from slow local batches
+
+Faster-whisper runs with voice-activity filtering and without conditioning each window on previous generated text. The installed faster-whisper documentation identifies previous-text conditioning as a source of repetition failure loops; disabling it trades some cross-window consistency for safer long-VOD transcription. Exact duplicate records are identified only by equal start time, end time, and text. Identical dialogue at different timestamps remains distinct, so cleanup never guesses whether repeated speech was actually spoken.
+
+Ollama analysis uses smaller overlapping transcript batches and a configurable per-request total wait. Defaults are 4,000 characters and 600 seconds, configurable through positive-integer environment variables. Health/model checks remain separate so connection failures are not mislabeled as batch timeouts. Every batch reports its ordinal position. If a batch fails after earlier candidates validate, analysis continues and returns ranked partial candidates with the failed batch identified. Partial results remain in memory and never overwrite the project's last complete stored candidate set.
+
 ## Risks / Trade-offs
 
 - **Windows codec/backend variability** → Define required H.264/AAC fixtures, report the native error, document supported prerequisites, and do not silently transcode.

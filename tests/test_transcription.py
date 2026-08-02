@@ -1,17 +1,22 @@
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from spotlight.app import format_elapsed_time, format_timestamp
 from spotlight.transcription import (
+    ComputeConfig,
     CudaRuntimeUnavailableError,
     TranscriptionError,
+    TranscriptSegment,
     configure_packaged_cuda_dlls,
     detect_compute_config,
     detect_missing_cuda_dlls,
     detect_packaged_cuda_dll_directories,
+    remove_exact_duplicate_segments,
+    transcribe_audio,
     transcribe_video,
 )
 
@@ -100,6 +105,56 @@ def test_detect_compute_config_explains_missing_cuda_runtime() -> None:
         pytest.raises(CudaRuntimeUnavailableError, match="CUDA Toolkit 12.8"),
     ):
         detect_compute_config()
+
+
+def test_exact_duplicate_removal_preserves_legitimate_repeated_speech() -> None:
+    duplicated = TranscriptSegment(10.0, 12.0, "Can you hear me?")
+    repeated_later = TranscriptSegment(20.0, 22.0, "Can you hear me?")
+
+    cleaned = remove_exact_duplicate_segments((duplicated, duplicated, repeated_later))
+
+    assert cleaned == [duplicated, repeated_later]
+
+
+def test_transcription_disables_failure_loop_context_and_enables_vad(
+    tmp_path: Path,
+) -> None:
+    options: dict[str, object] = {}
+
+    class FakeWhisperModel:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def transcribe(
+            self, _path: str, **kwargs: object
+        ) -> tuple[list[object], object]:
+            options.update(kwargs)
+            return (
+                [
+                    SimpleNamespace(start=0.0, end=1.0, text=" Hello"),
+                    SimpleNamespace(start=0.0, end=1.0, text=" Hello"),
+                    SimpleNamespace(start=2.0, end=3.0, text=" Hello"),
+                ],
+                object(),
+            )
+
+    with (
+        patch("faster_whisper.WhisperModel", FakeWhisperModel),
+        patch(
+            "spotlight.transcription.detect_compute_config",
+            return_value=ComputeConfig("cpu", "int8", "test"),
+        ),
+    ):
+        segments, _compute = transcribe_audio(
+            tmp_path / "audio.wav", 3.0, lambda _value, _message: None
+        )
+
+    assert options["condition_on_previous_text"] is False
+    assert options["vad_filter"] is True
+    assert segments == [
+        TranscriptSegment(0.0, 1.0, "Hello"),
+        TranscriptSegment(2.0, 3.0, "Hello"),
+    ]
 
 
 def test_transcribe_video_removes_temporary_audio_after_failure(

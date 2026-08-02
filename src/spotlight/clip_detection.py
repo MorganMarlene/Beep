@@ -17,8 +17,9 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_VERSION_ENDPOINT = f"{OLLAMA_BASE_URL}/api/version"
 OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_BASE_URL}/api/tags"
 OLLAMA_ENDPOINT = f"{OLLAMA_BASE_URL}/api/generate"
-DEFAULT_BATCH_CHARACTER_LIMIT = 12_000
+DEFAULT_BATCH_CHARACTER_LIMIT = 4_000
 DEFAULT_BATCH_OVERLAP_SEGMENTS = 8
+DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS = 600
 MISSING_CONTEXT_PENALTY = 15
 VIRAL_SIGNAL_WEIGHTS = {
     "humor": 28,
@@ -63,6 +64,19 @@ class ClipAnalysisError(Exception):
     """Raised when local clip analysis cannot produce usable candidates."""
 
 
+def _positive_environment_integer(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ClipAnalysisError(f"{name} must be a positive whole number.") from error
+    if value <= 0:
+        raise ClipAnalysisError(f"{name} must be a positive whole number.")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ClipAnalysisConfig:
     """Local Ollama and transcript batching settings."""
@@ -70,12 +84,23 @@ class ClipAnalysisConfig:
     model_name: str = DEFAULT_OLLAMA_MODEL
     batch_character_limit: int = DEFAULT_BATCH_CHARACTER_LIMIT
     batch_overlap_segments: int = DEFAULT_BATCH_OVERLAP_SEGMENTS
+    request_timeout_seconds: int = DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS
 
     @classmethod
     def from_environment(cls) -> "ClipAnalysisConfig":
         """Load the model name without allowing a non-local inference endpoint."""
         model_name = os.environ.get("BEEP_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
-        return cls(model_name=model_name or DEFAULT_OLLAMA_MODEL)
+        return cls(
+            model_name=model_name or DEFAULT_OLLAMA_MODEL,
+            batch_character_limit=_positive_environment_integer(
+                "BEEP_OLLAMA_BATCH_CHARACTER_LIMIT",
+                DEFAULT_BATCH_CHARACTER_LIMIT,
+            ),
+            request_timeout_seconds=_positive_environment_integer(
+                "BEEP_OLLAMA_REQUEST_TIMEOUT_SECONDS",
+                DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,10 +152,11 @@ class ClipCandidate:
 
 @dataclass(frozen=True, slots=True)
 class ClipAnalysisResult:
-    """A complete in-memory candidate set and the Ollama model used."""
+    """Validated in-memory candidates, model, and any failed batch diagnostics."""
 
     candidates: tuple[ClipCandidate, ...]
     model_name: str
+    batch_failures: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,7 +401,10 @@ class OllamaClient:
             LOGGER.error(message, exc_info=True)
             raise ClipAnalysisError(message) from error
         except TimeoutError as error:
-            message = f"Ollama request to {request.full_url} timed out: {error}"
+            message = (
+                f"Ollama request to {request.full_url} timed out after "
+                f"{timeout} seconds: {error}"
+            )
             LOGGER.error(message, exc_info=True)
             raise ClipAnalysisError(message) from error
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -440,7 +469,9 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        response_body = self._request_json(request, timeout=180)
+        response_body = self._request_json(
+            request, timeout=self.config.request_timeout_seconds
+        )
         try:
             content = response_body["response"]
             done = response_body["done"]
@@ -671,23 +702,49 @@ def analyze_transcript(
         settings.batch_character_limit,
         settings.batch_overlap_segments,
     )
-    analyzer = analyze_batch or OllamaClient(settings).analyze_batch
+    if analyze_batch is None:
+        client = OllamaClient(settings)
+        client.check_health()
+        analyzer = client.analyze_batch
+    else:
+        analyzer = analyze_batch
     normalized: list[ClipCandidate] = []
+    batch_failures: list[str] = []
     for index, batch in enumerate(batches):
         progress(
             int(index / len(batches) * 90),
             f"Analyzing transcript batch {index + 1} of {len(batches)}...",
         )
-        for raw in analyzer(batch):
+        try:
+            raw_candidates = analyzer(batch)
+        except ClipAnalysisError as error:
+            failure = f"Batch {index + 1} of {len(batches)} failed: {error}"
+            LOGGER.warning(failure)
+            batch_failures.append(failure)
+            progress(int((index + 1) / len(batches) * 90), failure)
+            continue
+        for raw in raw_candidates:
             candidate = normalize_candidate(raw, segments, batch)
             if candidate is not None:
                 normalized.append(candidate)
 
     candidates = merge_and_rank_candidates(normalized, segments)
     if not candidates:
+        if batch_failures:
+            raise ClipAnalysisError(
+                "No validated candidates were produced. " + " ".join(batch_failures)
+            )
         raise ClipAnalysisError(
             "Ollama did not return any valid clip candidates. Try again or use a "
             "different local Ollama model."
         )
-    progress(100, "Clip analysis complete.")
-    return ClipAnalysisResult(tuple(candidates), settings.model_name)
+    if batch_failures:
+        progress(
+            100,
+            "Clip analysis completed with partial results. " + " ".join(batch_failures),
+        )
+    else:
+        progress(100, "Clip analysis complete.")
+    return ClipAnalysisResult(
+        tuple(candidates), settings.model_name, tuple(batch_failures)
+    )

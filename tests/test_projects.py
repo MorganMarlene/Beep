@@ -161,6 +161,31 @@ def test_complete_project_snapshot_round_trips_exact_data(tmp_path: Path) -> Non
     assert other_snapshot.candidates == ()
 
 
+def test_restoration_removes_only_exact_persisted_segment_duplicates(
+    tmp_path: Path,
+) -> None:
+    repository = make_repository(tmp_path)
+    project = repository.create_project("Duplicate transcript")
+    with repository._connect() as connection:
+        connection.executemany(
+            "INSERT INTO transcript_segments "
+            "(project_id, segment_index, start_seconds, end_seconds, text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                (project.project_id, 0, 10.0, 12.0, "Can you hear me?"),
+                (project.project_id, 1, 10.0, 12.0, "Can you hear me?"),
+                (project.project_id, 2, 20.0, 22.0, "Can you hear me?"),
+            ),
+        )
+
+    snapshot = repository.load_project(project.project_id)
+
+    assert snapshot.transcript == (
+        TranscriptSegment(10.0, 12.0, "Can you hear me?"),
+        TranscriptSegment(20.0, 22.0, "Can you hear me?"),
+    )
+
+
 def test_source_change_clears_derived_rows_atomically(tmp_path: Path) -> None:
     repository = make_repository(tmp_path)
     project = repository.create_project("Source change")

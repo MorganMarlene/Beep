@@ -90,6 +90,20 @@ BEEP connects only to Ollama's loopback endpoint at `127.0.0.1:11434`. To select
 another locally installed Ollama model for a session, set `BEEP_OLLAMA_MODEL`
 before launching BEEP. No Ollama Python SDK or other AI runtime is required.
 
+Clip analysis uses 4,000-character overlapping batches and allows each local
+`/api/generate` request up to 600 seconds by default. These limits can be adjusted
+for slower or faster local hardware before launching BEEP:
+
+```powershell
+$env:BEEP_OLLAMA_BATCH_CHARACTER_LIMIT = "4000"
+$env:BEEP_OLLAMA_REQUEST_TIMEOUT_SECONDS = "600"
+uv run beep
+```
+
+Both settings must be positive whole numbers. If a later batch fails, BEEP keeps
+validated candidates from successful batches in memory, identifies the failed
+batch, and preserves the project's last complete saved candidate set.
+
 ## Local projects
 
 BEEP starts without automatically opening a project. Use **New Project** to create

@@ -212,3 +212,29 @@ def test_candidate_save_failure_keeps_new_result_in_memory_and_old_result_saved(
     assert repository.load_project(project_id).candidates == (previous,)
     assert "database locked" in window.progress_label.text()
     window.close()
+
+
+def test_partial_analysis_stays_in_memory_and_preserves_complete_saved_candidates(
+    application: QApplication, repository: ProjectRepository
+) -> None:
+    window = SpotlightWindow(repository)
+    window.create_project("Partial analysis recovery")
+    assert window.active_project is not None
+    project_id = window.active_project.project_id
+    previous = make_candidate(80)
+    partial = make_candidate(95)
+    repository.replace_candidates(project_id, (previous,))
+
+    window.display_clip_analysis_result(
+        ClipAnalysisResult(
+            (partial,),
+            "qwen2.5:7b",
+            ("Batch 2 of 4 failed: request timed out",),
+        )
+    )
+
+    assert window.clip_candidates == [partial]
+    assert repository.load_project(project_id).candidates == (previous,)
+    assert "Batch 2 of 4 failed" in window.progress_label.text()
+    assert "kept in memory" in window.progress_label.text()
+    window.close()

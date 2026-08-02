@@ -51,3 +51,5 @@
 - [x] 7.3 Require exact in-range transcript evidence, fixed English metadata, factual generated summaries/reasons, and explicit missing-context weaknesses for every accepted AI candidate.
 - [x] 7.4 Replace generic-dialogue ranking with deterministic viral-signal weights and low-value-content penalties, with focused grounding and ranking regression tests.
 - [x] 7.5 Preserve multi-hour source durations, playback positions, and seek targets across PySide signal boundaries without signed 32-bit microsecond overflow.
+- [x] 7.6 Prevent faster-whisper repetition loops and deduplicate only exact transcript records across transcription, persistence restoration, and UI rendering while preserving repeated speech at distinct timestamps.
+- [x] 7.7 Reduce Ollama batch size, add a configurable request timeout, identify failed batches, and keep validated partial candidates in memory without replacing the last complete saved result.

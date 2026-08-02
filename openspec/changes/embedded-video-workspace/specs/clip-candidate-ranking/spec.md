@@ -48,3 +48,41 @@ BEEP SHALL lower candidate ranking when transcript evidence indicates music-only
 #### Scenario: Menu or loading state is not observable
 - **WHEN** transcript-only analysis cannot establish whether the source shows a menu or loading screen
 - **THEN** BEEP records that the condition cannot be verified and does not claim it detected visual content
+
+### Requirement: Responsive analysis and failure recovery
+BEEP SHALL run analysis outside the PySide6 UI thread, split long transcripts into bounded overlapping batches, use a configurable positive total request timeout for each local Ollama generation request, identify every batch by its ordinal position, and restore an actionable UI state after success, partial success, or failure without changing the completed transcript.
+
+#### Scenario: Analysis is running
+- **WHEN** local candidate analysis takes time to complete
+- **THEN** the window remains responsive and displays the current batch number and progress
+
+#### Scenario: Later batch times out
+- **WHEN** one or more earlier batches produced validated candidates and a later batch exceeds the configured request timeout
+- **THEN** BEEP identifies the failed batch, continues remaining batches, and returns the validated candidates as partial in-memory results
+
+#### Scenario: No batch produces a valid result
+- **WHEN** analysis cannot start or no valid structured candidate can be produced
+- **THEN** BEEP shows the specific local setup or batch errors, preserves the transcript and existing candidates, and allows the user to retry
+
+### Requirement: In-memory result lifecycle
+Version 1 of BEEP SHALL persist a complete validated clip-candidate result when it belongs to a saved project. BEEP SHALL keep incomplete or unsaved candidate results in application memory only, SHALL NOT replace a project's last complete stored candidates with partial results, and SHALL discard memory-only results when the application closes.
+
+#### Scenario: Complete valid candidates belong to a saved project
+- **WHEN** every analysis batch completes successfully for a saved active project
+- **THEN** BEEP atomically stores the ranked candidates in that project and keeps them available in the current application session
+
+#### Scenario: Partial candidates belong to a saved project
+- **WHEN** validated candidates survive from successful batches but one or more other batches fail
+- **THEN** BEEP displays the partial candidates in memory, identifies the failed batches, and preserves the project's last complete stored candidate result
+
+#### Scenario: Candidates do not belong to a saved project
+- **WHEN** valid candidate results exist without a saved project to own them
+- **THEN** BEEP displays them for the current session without writing them to SQLite
+
+#### Scenario: Application restarts with memory-only candidates
+- **WHEN** the user closes and reopens BEEP after generating unsaved or partial candidates
+- **THEN** those memory-only candidate results are not restored
+
+#### Scenario: Candidate persistence fails
+- **WHEN** BEEP cannot atomically save a newly completed candidate result for a saved project
+- **THEN** BEEP retains the project's last complete stored candidate result, reports the storage error, and keeps the newly generated candidates in memory for the current session
