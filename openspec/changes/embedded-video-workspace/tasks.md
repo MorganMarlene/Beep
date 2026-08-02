@@ -50,3 +50,4 @@
 - [x] 7.2 Add gated Windows integration coverage for the complete window Play path, rendered video frames, advancing playback time, AAC track detection, and audio-output readiness.
 - [x] 7.3 Require exact in-range transcript evidence, fixed English metadata, factual generated summaries/reasons, and explicit missing-context weaknesses for every accepted AI candidate.
 - [x] 7.4 Replace generic-dialogue ranking with deterministic viral-signal weights and low-value-content penalties, with focused grounding and ranking regression tests.
+- [x] 7.5 Preserve multi-hour source durations, playback positions, and seek targets across PySide signal boundaries without signed 32-bit microsecond overflow.

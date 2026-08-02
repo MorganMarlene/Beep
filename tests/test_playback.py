@@ -130,6 +130,22 @@ def test_clock_publishes_seek_immediately_to_multiple_subscribers() -> None:
     assert first[-1] == second[-1] == clock.snapshot
 
 
+def test_clock_preserves_multi_hour_microseconds_across_qt_signals() -> None:
+    adapter = FakePlaybackAdapter()
+    clock = PlaybackClock(adapter)
+    duration_us = 10_124_359_667
+    target_us = 9_000_000_000
+
+    clock.load(LocalMediaSource(8, Path("long-vod.mp4"), duration_us))
+    adapter.signals.source_loaded.emit(8, duration_us)
+    clock.seek(target_us)
+
+    assert clock.snapshot.available
+    assert clock.snapshot.duration_us == duration_us
+    assert clock.snapshot.display_position_us == target_us
+    assert adapter.seeks == [target_us]
+
+
 def test_clock_coalesces_positions_and_rejects_stale_sources() -> None:
     adapter = FakePlaybackAdapter()
     clock = PlaybackClock(adapter)

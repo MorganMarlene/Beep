@@ -61,8 +61,10 @@ class PlaybackClockSnapshot:
 class PlaybackSignals(QObject):
     """Backend events tagged with the neutral source identity."""
 
-    source_loaded = Signal(int, int)
-    position_changed = Signal(int, int)
+    # Source time uses Python integers because Qt's Signal(int) is signed 32-bit
+    # and overflows after about 35 minutes when the value is in microseconds.
+    source_loaded = Signal(int, object)
+    position_changed = Signal(int, object)
     state_changed = Signal(int, str)
     seeking_changed = Signal(int, bool)
     failed = Signal(int, str)
@@ -364,7 +366,7 @@ class PlaybackClock(QObject):
         self.adapter.close()
         self.snapshot = PlaybackClockSnapshot()
 
-    @Slot(int, int)
+    @Slot(int, object)
     def _source_loaded(self, source_id: int, duration_us: int) -> None:
         if source_id != self.snapshot.source_id:
             return
@@ -377,7 +379,7 @@ class PlaybackClock(QObject):
         )
         self._publish()
 
-    @Slot(int, int)
+    @Slot(int, object)
     def _position_changed(self, source_id: int, position_us: int) -> None:
         if source_id != self.snapshot.source_id:
             return

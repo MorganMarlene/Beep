@@ -49,6 +49,10 @@ BEEP SHALL provide play, pause, and seek controls, a seekable timeline, and a cu
 - **WHEN** a requested timestamp is before zero or after the known media duration
 - **THEN** BEEP clamps the request to the nearest valid media boundary and keeps the displayed time consistent with the effective seek position
 
+#### Scenario: Multi-hour source exceeds a 32-bit microsecond value
+- **WHEN** a source duration, playback position, or seek target is greater than 2,147,483,647 microseconds
+- **THEN** BEEP preserves the complete source-relative value across playback signal boundaries without overflow and enables playback when the backend reports the source ready
+
 ### Requirement: Immediate non-blocking seeking
 BEEP SHALL initiate every seek without blocking the PySide6 UI thread, acknowledge the requested timeline/time position within 100 milliseconds, and target presentation of the decoded frame within 250 milliseconds at p95 for supported local reference fixtures on the documented reference Windows system.
 

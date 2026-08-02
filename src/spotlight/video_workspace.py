@@ -30,7 +30,7 @@ from spotlight.playback import (
 class TimelineSlider(QSlider):
     """A source-time timeline with one reusable value mapping."""
 
-    source_position_requested = Signal(int)
+    source_position_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__(Qt.Orientation.Horizontal)
@@ -130,7 +130,7 @@ class VideoWorkspace(QWidget):
     """Video-first layout that contains existing review panels unchanged."""
 
     play_pause_requested = Signal()
-    seek_requested = Signal(int)
+    seek_requested = Signal(object)
 
     def __init__(
         self,

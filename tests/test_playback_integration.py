@@ -22,6 +22,7 @@ from spotlight.playback import (  # noqa: E402
 )
 
 RUN_INTEGRATION = os.environ.get("BEEP_RUN_PLAYBACK_INTEGRATION") == "1"
+EXTERNAL_FIXTURE = os.environ.get("BEEP_PLAYBACK_FIXTURE")
 
 
 @pytest.fixture(scope="module")
@@ -150,6 +151,52 @@ def test_window_play_control_starts_video_with_audio_ready(
             and window.playback_clock.snapshot.effective_position_us > 0
             and bool(frames)
         ),
+    )
+    window.close()
+
+
+@pytest.mark.skipif(
+    not RUN_INTEGRATION or sys.platform != "win32" or not EXTERNAL_FIXTURE,
+    reason=(
+        "Set BEEP_RUN_PLAYBACK_INTEGRATION=1 and BEEP_PLAYBACK_FIXTURE to test "
+        "an external Windows VOD."
+    ),
+)
+def test_window_loads_external_multi_hour_vod(application: QApplication) -> None:
+    media_path = Path(EXTERNAL_FIXTURE or "")
+    if not media_path.is_file():
+        pytest.fail(f"External playback fixture does not exist: {media_path}")
+    window = SpotlightWindow()
+    frames: list[int] = []
+    window.video_workspace.video_output.videoSink().videoFrameChanged.connect(
+        lambda frame: frames.append(frame.startTime()) if frame.isValid() else None
+    )
+    window.show()
+    window._load_playback_source(
+        media_path,
+        VideoMetadata(10_800.0, 1920, 1080, 60.0, "h264", "aac", 6_000_000),
+    )
+
+    assert wait_for(
+        application,
+        lambda: window.video_workspace.play_pause_button.isEnabled(),
+        attempts=3_000,
+    )
+    adapter = window.playback_adapter
+    assert isinstance(adapter, QtPlaybackAdapter)
+    assert window.playback_clock.snapshot.duration_us > 2_147_483_647
+    assert adapter.has_video
+    assert adapter.has_audio
+    assert adapter.has_audio_output
+    window.video_workspace.play_pause_button.click()
+    assert wait_for(
+        application,
+        lambda: (
+            window.playback_clock.snapshot.state == "playing"
+            and window.playback_clock.snapshot.effective_position_us > 0
+            and bool(frames)
+        ),
+        attempts=1_000,
     )
     window.close()
 

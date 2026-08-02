@@ -156,6 +156,26 @@ def test_seek_intent_is_reflected_within_ui_target(
     window.close()
 
 
+def test_multi_hour_timeline_seek_does_not_overflow_qt_signal(
+    application: QApplication, tmp_path: Path
+) -> None:
+    adapter = FakePlaybackAdapter()
+    window = SpotlightWindow(playback_adapter=adapter)
+    source_path = tmp_path / "long-review.mp4"
+    source_path.touch()
+    duration_seconds = 10_124.359667
+    window._load_playback_source(source_path, make_metadata(duration_seconds))
+    source = adapter.loaded_sources[-1]
+    adapter.signals.source_loaded.emit(source.source_id, source.duration_us)
+
+    window.video_workspace.timeline.source_position_requested.emit(9_000_000_000)
+
+    assert window.playback_clock.snapshot.available
+    assert window.playback_clock.snapshot.duration_us == 10_124_359_667
+    assert adapter.seeks == [9_000_000_000]
+    window.close()
+
+
 def test_play_button_reaches_the_playback_adapter(
     application: QApplication, tmp_path: Path
 ) -> None:
