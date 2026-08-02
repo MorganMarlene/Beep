@@ -7,8 +7,10 @@ import pytest
 
 from spotlight.clip_detection import (
     OLLAMA_ENDPOINT,
+    OLLAMA_RESPONSE_SCHEMA,
     OLLAMA_TAGS_ENDPOINT,
     OLLAMA_VERSION_ENDPOINT,
+    VIRAL_SIGNAL_WEIGHTS,
     ClipAnalysisConfig,
     ClipAnalysisError,
     OllamaClient,
@@ -36,19 +38,19 @@ def make_raw(
     end: int,
     *,
     score: int = 80,
-    clip_type: str = "story payoff",
-    signals: tuple[str, ...] = ("setup and payoff",),
+    clip_type: str = "story setup and payoff",
+    signals: tuple[str, ...] = ("story setup and payoff",),
     weaknesses: tuple[str, ...] = (),
+    evidence_quotes: tuple[str, ...] | None = None,
 ) -> RawClipCandidate:
     return RawClipCandidate(
         start_segment=start,
         end_segment=end,
         clip_type=clip_type,
         score=score,
-        summary="A concise summary",
-        selection_reasoning="The setup makes the payoff understandable.",
         strong_signals=signals,
         weaknesses=weaknesses,
+        evidence_quotes=evidence_quotes or (f"segment {start}",),
     )
 
 
@@ -86,6 +88,7 @@ def test_candidate_parser_keeps_valid_items_and_rejects_invalid_items() -> None:
         "selection_reasoning": "Clear setup and payoff.",
         "strong_signals": ["deadpan humor"],
         "weaknesses": [],
+        "evidence_quotes": ["A joke lands."],
     }
     invalid = {**valid, "score": 101}
 
@@ -100,13 +103,24 @@ def test_candidate_parser_rejects_malformed_json() -> None:
         parse_raw_candidates("not-json")
 
 
+def test_ollama_schema_allows_only_grounded_fixed_vocabulary_output() -> None:
+    candidate_schema = OLLAMA_RESPONSE_SCHEMA["properties"]["candidates"]["items"]
+
+    assert candidate_schema["additionalProperties"] is False
+    assert "summary" not in candidate_schema["properties"]
+    assert "selection_reasoning" not in candidate_schema["properties"]
+    assert "evidence_quotes" in candidate_schema["required"]
+
+
 def test_normalization_derives_timestamps_and_moves_visual_claims() -> None:
     segments = [make_segment(index) for index in range(4)]
     batch = build_transcript_batches(segments)[0]
     raw = make_raw(
         1,
         2,
-        signals=("funny dialogue", "facial reaction"),
+        clip_type="humor",
+        signals=("humor", "facial reaction"),
+        evidence_quotes=("segment 1",),
     )
 
     candidate = normalize_candidate(raw, segments, batch)
@@ -114,8 +128,98 @@ def test_normalization_derives_timestamps_and_moves_visual_claims() -> None:
     assert candidate is not None
     assert candidate.start_seconds == 5.0
     assert candidate.end_seconds == 14.0
-    assert candidate.strong_signals == ("funny dialogue",)
-    assert "Unverified visual context: facial reaction" in candidate.weaknesses
+    assert candidate.strong_signals == ("humor",)
+    assert candidate.clip_type == "humor"
+    assert "Visual context is unavailable." in candidate.weaknesses
+    assert candidate.summary == 'Transcript evidence: "segment 1"'
+    assert candidate.selection_reasoning == (
+        "Selected for transcript-supported signals: humor."
+    )
+
+
+def test_normalization_rejects_candidate_without_exact_transcript_evidence() -> None:
+    segments = [make_segment(index) for index in range(3)]
+    batch = build_transcript_batches(segments)[0]
+
+    candidate = normalize_candidate(
+        make_raw(0, 1, evidence_quotes=("Something never said",)), segments, batch
+    )
+
+    assert candidate is None
+
+
+def test_normalization_rejects_generic_dialogue_without_viral_signal() -> None:
+    segments = [make_segment(0, "We kept talking about the same thing.")]
+    batch = build_transcript_batches(segments)[0]
+
+    candidate = normalize_candidate(
+        make_raw(
+            0,
+            0,
+            signals=("ordinary dialogue",),
+            evidence_quotes=(segments[0].text,),
+        ),
+        segments,
+        batch,
+    )
+
+    assert candidate is None
+
+
+def test_ranking_vocabulary_covers_approved_viral_signals() -> None:
+    assert set(VIRAL_SIGNAL_WEIGHTS) == {
+        "humor",
+        "laughter",
+        "excitement",
+        "screaming",
+        "surprise",
+        "emotional reaction",
+        "argument",
+        "memorable quote",
+        "unexpected event",
+        "impressive gameplay",
+        "failure",
+        "clutch moment",
+        "community moment",
+        "story setup and payoff",
+    }
+
+
+def test_viral_ranking_beats_high_confidence_low_value_dialogue() -> None:
+    segments = [
+        make_segment(0, "I cannot believe we won that at the last second!"),
+        make_segment(1, "Okay, I guess we can keep talking about the same thing."),
+    ]
+    batch = build_transcript_batches(segments)[0]
+    clutch = normalize_candidate(
+        make_raw(
+            0,
+            0,
+            score=70,
+            clip_type="clutch moment",
+            signals=("clutch moment", "excitement"),
+            evidence_quotes=(segments[0].text,),
+        ),
+        segments,
+        batch,
+    )
+    filler = normalize_candidate(
+        make_raw(
+            1,
+            1,
+            score=99,
+            clip_type="memorable quote",
+            signals=("memorable quote",),
+            weaknesses=("Low-energy dialogue.", "Filler."),
+            evidence_quotes=(segments[1].text,),
+        ),
+        segments,
+        batch,
+    )
+
+    assert clutch is not None
+    assert filler is not None
+    assert clutch.score > filler.score
 
 
 def test_normalization_rejects_model_range_outside_batch() -> None:
@@ -148,7 +252,7 @@ def test_adjacent_batch_candidates_merge_setup_through_payoff() -> None:
     assert ranked[0].end_segment == 3
     assert ranked[0].start_seconds == segments[0].start_seconds
     assert ranked[0].end_seconds == segments[3].end_seconds
-    assert ranked[0].score == 90
+    assert ranked[0].score == 71
     assert not any("Missing context" in item for item in ranked[0].weaknesses)
 
 
@@ -159,13 +263,18 @@ def test_unrecovered_batch_boundary_is_marked_and_down_ranked() -> None:
         character_limit=90,
         overlap_segments=1,
     )[0]
-    raw = make_raw(batch.segments[0].index, batch.segments[-1].index, score=80)
+    raw = make_raw(
+        batch.segments[0].index,
+        batch.segments[-1].index,
+        score=80,
+        evidence_quotes=(segments[batch.segments[0].index].text,),
+    )
 
     candidate = normalize_candidate(raw, segments, batch)
 
     assert candidate is not None
-    assert candidate.score == 70
-    assert any("Missing context" in weakness for weakness in candidate.weaknesses)
+    assert candidate.score == 49
+    assert "Missing setup or payoff context." in candidate.weaknesses
 
 
 def test_analysis_is_in_memory_and_repeatable_with_a_local_test_double() -> None:
@@ -215,8 +324,9 @@ def valid_generate_content() -> str:
                     "score": 80,
                     "summary": "A joke.",
                     "selection_reasoning": "It stands alone.",
-                    "strong_signals": ["funny dialogue"],
+                    "strong_signals": ["humor"],
                     "weaknesses": [],
+                    "evidence_quotes": ["segment 0"],
                 }
             ]
         }

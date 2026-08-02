@@ -21,6 +21,8 @@ class FakePlaybackAdapter(QObject):
         self.signals = PlaybackSignals()
         self.loaded_sources: list[LocalMediaSource] = []
         self.seeks: list[int] = []
+        self.play_count = 0
+        self.pause_count = 0
         self.clear_count = 0
         self.close_count = 0
 
@@ -35,10 +37,10 @@ class FakePlaybackAdapter(QObject):
         self.clear_count += 1
 
     def play(self) -> None:
-        pass
+        self.play_count += 1
 
     def pause(self) -> None:
-        pass
+        self.pause_count += 1
 
     def seek(self, position_us: int) -> None:
         self.seeks.append(position_us)
@@ -151,6 +153,19 @@ def test_seek_intent_is_reflected_within_ui_target(
 
     p95_ms = sorted(latencies_ms)[-1]
     assert p95_ms < 100
+    window.close()
+
+
+def test_play_button_reaches_the_playback_adapter(
+    application: QApplication, tmp_path: Path
+) -> None:
+    adapter = FakePlaybackAdapter()
+    window = SpotlightWindow(playback_adapter=adapter)
+    load_fake_source(window, adapter, tmp_path)
+
+    window.video_workspace.play_pause_button.click()
+
+    assert adapter.play_count == 1
     window.close()
 
 

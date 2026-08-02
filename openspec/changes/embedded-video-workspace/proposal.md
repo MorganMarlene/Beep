@@ -11,6 +11,7 @@ Creators currently have to leave BEEP to verify transcript context and AI clip c
 - Seek playback to a transcript segment's start when its timestamp is activated.
 - Keep player position, timeline, transcript, and candidate selection synchronized, including an active transcript-section highlight.
 - Preserve the active project indicator, restored project media paths, transcripts, candidates, GPU transcription, and local Ollama clip detection.
+- Require exact transcript evidence for every AI candidate, generate factual English summaries and reasons from that evidence, and rank for explicit viral signals instead of generic dialogue.
 - Use a responsive 1440p-first layout that remains usable at 1080p and scales cleanly at 4K.
 - Keep all playback local. This version does not add editing, trimming, exporting, captions, vertical rendering, publishing, Twitch integration, or new persistence behavior.
 
@@ -22,11 +23,11 @@ Creators currently have to leave BEEP to verify transcript context and AI clip c
 
 ### Modified Capabilities
 
-None. Existing project persistence and clip-candidate ranking requirements remain unchanged.
+- `clip-candidate-ranking`: Require grounded English output and deterministic viral-signal prioritization while preserving project persistence and local-only Ollama inference.
 
 ## Impact
 
 - Affects the PySide6 main workspace, transcript presentation, candidate interaction, playback state coordination, and UI tests.
 - Introduces use of PySide6's local multimedia facilities and requires Windows packaging/runtime verification for the selected Qt multimedia backend and supported codecs.
-- Does not change the SQLite schema, project data model, transcription device selection, Ollama integration, candidate ranking, or media files.
+- Does not change the SQLite schema, persisted candidate shape, transcription device selection, Ollama runtime, or media files.
 - Requires small local media fixtures or controllable playback test doubles; large VODs remain outside Git.

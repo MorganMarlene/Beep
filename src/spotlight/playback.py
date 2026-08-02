@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
 SOURCE_MICROSECONDS_PER_SECOND = 1_000_000
@@ -104,6 +104,9 @@ class QtPlaybackAdapter(QObject):
         super().__init__()
         self.signals = PlaybackSignals()
         self._audio_output = QAudioOutput(self)
+        self._audio_output.setDevice(QMediaDevices.defaultAudioOutput())
+        self._audio_output.setMuted(False)
+        self._audio_output.setVolume(1.0)
         self._player = QMediaPlayer(self)
         self._player.setAudioOutput(self._audio_output)
         self._player.setVideoOutput(video_output)
@@ -122,10 +125,33 @@ class QtPlaybackAdapter(QObject):
     @property
     def diagnostics(self) -> str:
         """Report only backend facts Qt exposes consistently."""
-        return (
-            "Qt Multimedia; video hardware acceleration is selected by the "
-            "platform backend and driver and is not confirmed by BEEP."
+        audio_device = self._audio_output.device()
+        audio_description = (
+            audio_device.description() if not audio_device.isNull() else "none detected"
         )
+        video_status = "detected" if self._player.hasVideo() else "not detected"
+        audio_status = "detected" if self._player.hasAudio() else "not detected"
+        return (
+            f"Qt Multimedia; video track {video_status}; audio track {audio_status}; "
+            f"audio output: {audio_description}. Video hardware acceleration is "
+            "selected by the platform backend and driver and is not confirmed by "
+            "BEEP."
+        )
+
+    @property
+    def has_video(self) -> bool:
+        """Return whether Qt found a decodable video track in the active source."""
+        return self._player.hasVideo()
+
+    @property
+    def has_audio(self) -> bool:
+        """Return whether Qt found a decodable audio track in the active source."""
+        return self._player.hasAudio()
+
+    @property
+    def has_audio_output(self) -> bool:
+        """Return whether Windows exposed a usable default audio output to Qt."""
+        return not self._audio_output.device().isNull()
 
     def load(self, source: LocalMediaSource) -> None:
         """Load a source through Qt without reading media into Python memory."""
@@ -189,10 +215,9 @@ class QtPlaybackAdapter(QObject):
 
     @Slot(int)
     def _on_duration_changed(self, duration_ms: int) -> None:
-        source = self._active_source()
-        if source is None or duration_ms <= 0:
-            return
-        self._emit_loaded(source, qt_ms_to_source_us(duration_ms))
+        # Duration can arrive while Qt is still probing tracks. It is not proof that
+        # the source is ready to play, so readiness is handled by media status.
+        del duration_ms
 
     @Slot(object)
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
@@ -203,6 +228,14 @@ class QtPlaybackAdapter(QObject):
             QMediaPlayer.MediaStatus.LoadedMedia,
             QMediaPlayer.MediaStatus.BufferedMedia,
         ):
+            if not self._player.hasVideo():
+                self._emit_error(
+                    source,
+                    "Qt loaded the container but found no decodable video track. "
+                    "BEEP currently supports MP4 or MOV containing a codec available "
+                    "to Qt Multimedia on this Windows PC.",
+                )
+                return
             duration_us = qt_ms_to_source_us(self._player.duration())
             self._emit_loaded(source, duration_us or source.duration_us)
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:

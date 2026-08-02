@@ -19,7 +19,36 @@ OLLAMA_TAGS_ENDPOINT = f"{OLLAMA_BASE_URL}/api/tags"
 OLLAMA_ENDPOINT = f"{OLLAMA_BASE_URL}/api/generate"
 DEFAULT_BATCH_CHARACTER_LIMIT = 12_000
 DEFAULT_BATCH_OVERLAP_SEGMENTS = 8
-MISSING_CONTEXT_PENALTY = 10
+MISSING_CONTEXT_PENALTY = 15
+VIRAL_SIGNAL_WEIGHTS = {
+    "humor": 28,
+    "laughter": 24,
+    "excitement": 20,
+    "screaming": 22,
+    "surprise": 24,
+    "emotional reaction": 20,
+    "argument": 22,
+    "memorable quote": 24,
+    "unexpected event": 26,
+    "impressive gameplay": 24,
+    "failure": 20,
+    "clutch moment": 30,
+    "community moment": 22,
+    "story setup and payoff": 26,
+}
+CLIP_TYPES = tuple(VIRAL_SIGNAL_WEIGHTS)
+LOW_VALUE_PENALTIES = {
+    "Missing setup or payoff context.": 15,
+    "Visual context is unavailable.": 5,
+    "A menu or loading screen cannot be verified from the transcript.": 10,
+    "Music-only section.": 35,
+    "Silence or dead air.": 35,
+    "Repetitive conversation.": 22,
+    "Low-energy dialogue.": 22,
+    "Filler.": 25,
+    "Gameplay context is unclear from the transcript.": 12,
+}
+WEAKNESS_LABELS = tuple(LOW_VALUE_PENALTIES)
 VISUAL_ONLY_TERMS = (
     "facial reaction",
     "face reaction",
@@ -74,10 +103,9 @@ class RawClipCandidate:
     end_segment: int
     clip_type: str
     score: int
-    summary: str
-    selection_reasoning: str
     strong_signals: tuple[str, ...]
     weaknesses: tuple[str, ...]
+    evidence_quotes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,30 +143,43 @@ class OllamaStatus:
 
 OLLAMA_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "candidates": {
             "type": "array",
             "items": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "start_segment": {"type": "integer"},
                     "end_segment": {"type": "integer"},
-                    "clip_type": {"type": "string"},
+                    "clip_type": {"type": "string", "enum": list(CLIP_TYPES)},
                     "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "summary": {"type": "string"},
-                    "selection_reasoning": {"type": "string"},
-                    "strong_signals": {"type": "array", "items": {"type": "string"}},
-                    "weaknesses": {"type": "array", "items": {"type": "string"}},
+                    "strong_signals": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": list(VIRAL_SIGNAL_WEIGHTS),
+                        },
+                    },
+                    "weaknesses": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(WEAKNESS_LABELS)},
+                    },
+                    "evidence_quotes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
                 },
                 "required": [
                     "start_segment",
                     "end_segment",
                     "clip_type",
                     "score",
-                    "summary",
-                    "selection_reasoning",
                     "strong_signals",
                     "weaknesses",
+                    "evidence_quotes",
                 ],
             },
         }
@@ -147,19 +188,28 @@ OLLAMA_RESPONSE_SCHEMA: dict[str, Any] = {
 }
 
 
-SYSTEM_PROMPT = """You rank potential short-form clips from timestamped
-transcript segments. Return only candidates supported by the supplied transcript.
-Scores range from 0 to
-100. Prioritize funny dialogue, deadpan humor, arguments, awkward moments,
-unexpected roleplay, complete story setup and payoff, and moments understandable
-outside GTA RP. Down-rank music-only passages, repetitive crafting, long dead air,
-driving without meaningful dialogue, and action without humor or understandable
-context. Use source segment indices, never invented timestamps. Include necessary
-setup through payoff. If context is incomplete, lower the score and state what is
-missing. Transcript analysis cannot detect facial reactions, menus, loading screens,
-or other visual-only evidence: never list those as detected strong signals; mention
-them only as unverified or missing visual context. Keep summaries and explanations
-short and concrete."""
+SYSTEM_PROMPT = """You identify transcript moments with genuine short-form viral
+potential. All generated values MUST be in English. The only exception is an
+evidence quote, which MUST copy the supplied transcript verbatim and MUST NOT be
+translated or paraphrased.
+
+Return candidates only when exact transcript evidence supports at least one allowed
+strong signal. Prioritize humor, laughter, excitement, screaming, surprise,
+emotional reactions, arguments, memorable quotes, unexpected events, impressive
+gameplay, failures, clutch moments, community-worthy moments, and complete story
+setup and payoff. A normal exchange of dialogue is not a candidate. Down-rank or
+omit menus/loading uncertainty, music-only sections, silence or dead air, repetitive
+conversation, low-energy dialogue, and filler.
+
+Do not infer a person, action, event, emotion, gameplay result, or visual occurrence
+that the transcript does not explicitly support. Transcript analysis cannot detect
+facial reactions, menus, loading screens, or other visual-only evidence. Never claim
+that it did. Use only the allowed English enum values in clip_type, strong_signals,
+and weaknesses. Supply one or more short evidence_quotes copied exactly from the
+selected transcript range for every candidate. Use source segment indices, never
+invented timestamps. Include necessary setup through payoff. If context is missing,
+use the matching missing-context weakness and lower confidence. Score is model
+confidence from 0 to 100; BEEP performs the final ranking deterministically."""
 
 
 def serialize_segment(indexed: IndexedTranscriptSegment) -> str:
@@ -278,14 +328,13 @@ def parse_raw_candidates(content: str) -> list[RawClipCandidate]:
                     end_segment=end,
                     clip_type=_require_text(item.get("clip_type"), "clip_type"),
                     score=score,
-                    summary=_require_text(item.get("summary"), "summary"),
-                    selection_reasoning=_require_text(
-                        item.get("selection_reasoning"), "selection_reasoning"
-                    ),
                     strong_signals=_require_text_list(
                         item.get("strong_signals"), "strong_signals"
                     ),
                     weaknesses=_require_text_list(item.get("weaknesses"), "weaknesses"),
+                    evidence_quotes=_require_text_list(
+                        item.get("evidence_quotes"), "evidence_quotes"
+                    ),
                 )
             )
         except (TypeError, ValueError):
@@ -413,10 +462,73 @@ def _sanitize_visual_signals(
     updated_weaknesses = list(weaknesses)
     for signal in signals:
         if any(term in signal.casefold() for term in VISUAL_ONLY_TERMS):
-            updated_weaknesses.append(f"Unverified visual context: {signal}")
+            updated_weaknesses.append("Visual context is unavailable.")
         else:
             accepted.append(signal)
     return tuple(dict.fromkeys(accepted)), tuple(dict.fromkeys(updated_weaknesses))
+
+
+def _canonical_values(
+    values: tuple[str, ...], allowed: Sequence[str]
+) -> tuple[str, ...]:
+    allowed_by_key = {value.casefold(): value for value in allowed}
+    canonical = (
+        allowed_by_key[value.casefold()]
+        for value in values
+        if value.casefold() in allowed_by_key
+    )
+    return tuple(dict.fromkeys(canonical))
+
+
+def _normalize_for_evidence(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _supported_evidence_quotes(
+    quotes: tuple[str, ...], selected_segments: Sequence[TranscriptSegment]
+) -> tuple[str, ...]:
+    transcript_text = _normalize_for_evidence(
+        " ".join(segment.text for segment in selected_segments)
+    )
+    supported = (
+        quote.strip()
+        for quote in quotes
+        if len(_normalize_for_evidence(quote)) >= 3
+        and _normalize_for_evidence(quote) in transcript_text
+    )
+    return tuple(dict.fromkeys(supported))
+
+
+def _grounded_summary(evidence_quotes: tuple[str, ...]) -> str:
+    evidence = " / ".join(f'"{quote}"' for quote in evidence_quotes[:2])
+    return f"Transcript evidence: {evidence}"
+
+
+def _selection_reasoning(signals: tuple[str, ...]) -> str:
+    return "Selected for transcript-supported signals: " + ", ".join(signals) + "."
+
+
+def _viral_score(
+    model_confidence: int,
+    signals: tuple[str, ...],
+    weaknesses: tuple[str, ...],
+    duration_seconds: float,
+) -> int:
+    strongest_signal = max(VIRAL_SIGNAL_WEIGHTS[signal] for signal in signals)
+    additional_signals = min(18, max(0, len(signals) - 1) * 6)
+    duration_adjustment = 5 if 8 <= duration_seconds <= 60 else 0
+    if duration_seconds < 3 or duration_seconds > 90:
+        duration_adjustment -= 15
+    penalties = sum(LOW_VALUE_PENALTIES.get(item, 0) for item in weaknesses)
+    score = (
+        22
+        + strongest_signal
+        + additional_signals
+        + round(model_confidence * 0.2)
+        + duration_adjustment
+        - penalties
+    )
+    return min(100, max(0, score))
 
 
 def normalize_candidate(
@@ -439,25 +551,36 @@ def normalize_candidate(
     if start.start_seconds < 0 or end.end_seconds <= start.start_seconds:
         return None
 
-    signals, weaknesses = _sanitize_visual_signals(raw.strong_signals, raw.weaknesses)
+    clip_types = _canonical_values((raw.clip_type,), CLIP_TYPES)
+    raw_signals, raw_weaknesses = _sanitize_visual_signals(
+        raw.strong_signals, raw.weaknesses
+    )
+    signals = _canonical_values(raw_signals, tuple(VIRAL_SIGNAL_WEIGHTS))
+    weaknesses = _canonical_values(raw_weaknesses, WEAKNESS_LABELS)
+    if not clip_types or not signals:
+        return None
+    selected_segments = source_segments[raw.start_segment : raw.end_segment + 1]
+    evidence_quotes = _supported_evidence_quotes(raw.evidence_quotes, selected_segments)
+    if not evidence_quotes:
+        return None
     boundary_limited = (
         batch.has_previous and raw.start_segment == batch.segments[0].index
     ) or (batch.has_next and raw.end_segment == batch.segments[-1].index)
-    score = raw.score
     if boundary_limited:
-        weakness = "Missing context: candidate touches an analysis batch boundary."
+        weakness = "Missing setup or payoff context."
         weaknesses = tuple(dict.fromkeys((*weaknesses, weakness)))
-        score = max(0, score - MISSING_CONTEXT_PENALTY)
+    duration_seconds = end.end_seconds - start.start_seconds
+    score = _viral_score(raw.score, signals, weaknesses, duration_seconds)
 
     return ClipCandidate(
         start_segment=raw.start_segment,
         end_segment=raw.end_segment,
         start_seconds=start.start_seconds,
         end_seconds=end.end_seconds,
-        clip_type=raw.clip_type,
+        clip_type=max(signals, key=VIRAL_SIGNAL_WEIGHTS.__getitem__),
         score=score,
-        summary=raw.summary,
-        selection_reasoning=raw.selection_reasoning,
+        summary=_grounded_summary(evidence_quotes),
+        selection_reasoning=_selection_reasoning(signals),
         strong_signals=signals,
         weaknesses=weaknesses,
         boundary_limited=boundary_limited,
@@ -512,9 +635,7 @@ def merge_and_rank_candidates(
         weaknesses = tuple(dict.fromkeys((*current.weaknesses, *candidate.weaknesses)))
         boundary_limited = False
         weaknesses = tuple(
-            item
-            for item in weaknesses
-            if "analysis batch boundary" not in item.casefold()
+            item for item in weaknesses if item != "Missing setup or payoff context."
         )
         recovered_score = stronger.score + (
             MISSING_CONTEXT_PENALTY if stronger.boundary_limited else 0

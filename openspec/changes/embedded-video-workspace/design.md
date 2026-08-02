@@ -12,7 +12,7 @@ Playback must use the same source-relative time domain as transcript/candidate s
 - Make video dominant at 1440p while keeping transcript, candidates, active project, timeline, controls, and status usable across the required resolutions.
 - Maintain one canonical source-time coordinate and deterministic one-to-many synchronization with immutable transcript/candidate timestamps.
 - Handle source load, project switch, playback errors, seeking, and shutdown without stale callbacks or UI blocking.
-- Preserve current project persistence, transcript search, candidate details/ranking, CUDA/CPU transcription, and local Ollama analysis.
+- Preserve current project persistence, transcript search, candidate details, CUDA/CPU transcription, and local Ollama analysis while grounding displayed candidate claims in exact transcript evidence.
 
 **Non-Goals:**
 
@@ -118,6 +118,12 @@ The application-facing protocol and clock coordinator contain no Windows media-s
 ### 11. Build accessibility into the widget boundaries
 
 All interactive widgets expose accessible names, roles, values, and concise state text. Playback and review actions are keyboard-operable with a logical focus order and visible focus indicator. Seeking, active transcript, selection, search matches, and errors use text, focus, shape, or accessible state in addition to color. Theme states meet WCAG 2.1 AA contrast targets where Qt rendering permits measurement, and layout tests include increased text size and Windows scaling.
+
+### 12. Separate evidence extraction from displayed AI prose and final ranking
+
+Ollama returns source segment indices, fixed English clip/signal/weakness labels, a confidence score, and exact transcript evidence quotes. BEEP rejects a candidate unless at least one quote occurs verbatim within its selected transcript range. Free-form model summaries and rationales are not displayed; BEEP constructs concise English summary and reasoning text from the validated quote and fixed signal labels. This makes every displayed factual detail traceable to transcript text and explicitly records missing setup, payoff, visual, or gameplay context through fixed weakness labels.
+
+Final ranking is deterministic and does not merely trust model confidence. Signal weights prioritize transcript-supported humor, laughter, excitement, screaming, surprise, emotional reactions, arguments, memorable quotes, unexpected events, impressive gameplay, failures, clutch moments, community moments, and story setup/payoff. Explicit music-only, silence, repetition, low-energy, filler, uncertain menu/loading, and missing-context weaknesses reduce the score. Candidates without an allowed positive signal or an exact in-range evidence quote are rejected as generic or ungrounded dialogue. Ollama remains the sole, local inference runtime and the persisted `ClipCandidate` shape does not change.
 
 ## Risks / Trade-offs
 

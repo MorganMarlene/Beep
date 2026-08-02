@@ -43,3 +43,10 @@
 - [ ] 6.3 Record the Qt multimedia backend and observable decode diagnostics on Windows, test concurrent playback with CUDA transcription and Ollama on the RTX 3070 Ti, and report contention or fallback without claiming unverified hardware decoding.
 - [x] 6.4 Verify read-only local behavior creates no edited media and adds no trimming, exporting, captions, vertical rendering, publishing, Twitch integration, remote service, profile/account coupling, or playback persistence.
 - [x] 6.5 Run pytest, Ruff lint, Ruff formatting check, Pyright, and strict OpenSpec validation, and resolve any failures before the feature is considered complete.
+
+## 7. Pre-merge corrective verification
+
+- [x] 7.1 Require Qt to confirm a decodable video track before enabling playback, bind a usable Windows default audio output, and expose factual video/audio/output diagnostics.
+- [x] 7.2 Add gated Windows integration coverage for the complete window Play path, rendered video frames, advancing playback time, AAC track detection, and audio-output readiness.
+- [x] 7.3 Require exact in-range transcript evidence, fixed English metadata, factual generated summaries/reasons, and explicit missing-context weaknesses for every accepted AI candidate.
+- [x] 7.4 Replace generic-dialogue ranking with deterministic viral-signal weights and low-value-content penalties, with focused grounding and ranking regression tests.
