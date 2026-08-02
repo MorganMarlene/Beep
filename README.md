@@ -65,8 +65,8 @@ the current session only.
 Each candidate includes source-derived timestamps, clip type, score, summary,
 selection reasoning, strong signals, and weaknesses or missing context. BEEP does
 not claim that transcript analysis detected facial reactions, menus, loading
-screens, or other visual-only events. Playback, editing, exporting, scheduling,
-and posting remain out of scope.
+screens, or other visual-only events. Editing, exporting, scheduling, and posting
+remain out of scope.
 
 ### Ollama setup on Windows
 
@@ -119,6 +119,35 @@ database remains local and is ignored by Git.
 Project rename, deletion, duplication, search, pinning, relinking, automatic
 reopening, reusable profiles, Twitch importing, editing, exports, titles,
 descriptions, thumbnails, and posting are not part of this version.
+
+## Embedded local video review
+
+BEEP can play the active project's local MP4 or MOV source inside the review
+workspace. Playback, the timeline, transcript segments, and ranked clip
+candidates share one source-relative clock. Activating a transcript timestamp or
+candidate seeks to its stored start time, and playback highlights the current
+transcript segment and applicable highest-ranked candidate.
+
+Version 1 is verified with H.264 video and AAC audio in MP4 and MOV containers on
+Windows. Qt Multimedia uses the platform-selected decoder; BEEP does not claim
+that video decoding is using CUDA or NVDEC. Other codec combinations may fail
+with the backend's real error. Qt seeking is responsive but is not guaranteed to
+be frame-accurate, especially for long-GOP or variable-frame-rate media.
+
+Playback streams the original local file and does not load the complete VOD or
+copy decoded frames into Python. It never edits, trims, exports, captions, or
+modifies the source.
+
+To run the optional real-backend tests in PowerShell:
+
+```powershell
+$env:BEEP_RUN_PLAYBACK_INTEGRATION = "1"
+uv run pytest tests/test_playback_integration.py -q -s
+```
+
+The test creates temporary H.264/AAC fixtures with FFmpeg and deletes them with
+the pytest temporary directory. See `docs/playback-verification.md` for manual
+acceptance steps and limitations.
 
 ## Installation status
 

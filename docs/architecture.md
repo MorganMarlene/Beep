@@ -213,7 +213,15 @@ timestamped transcript segments, and ranked candidates. Loading succeeds before
 the active UI changes. Missing media does not discard review data, and media bytes
 are never stored in SQLite.
 
+The approved `embedded-video-workspace` change adds a project-neutral Qt
+Multimedia playback adapter, a central source-time clock, and a bounded
+video-first workspace. The player receives only a neutral local-media source
+resolved from the active project; it never imports project persistence or writes
+SQLite. Playback streams through Qt's native video surface without Python frame
+buffers. Transcript and candidate navigation publish seek intents to the clock,
+while clock snapshots drive presentation without recursive seeks.
+
 Downloading, automatic clipping, editing, rendering, captions, computer vision,
-playback, exporting, scheduling, and publishing remain deferred. Transcript-only
+exporting, scheduling, and publishing remain deferred. Transcript-only
 analysis cannot claim detection of facial reactions, menus, loading screens, or
 other visual-only evidence.

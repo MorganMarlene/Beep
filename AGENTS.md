@@ -26,10 +26,13 @@ change, and the `add-projects-system` OpenSpec change. Clip detection must use
 Ollama as its sole AI runtime and remain local-only and responsive. Saved projects
 persist metadata, transcript segments, and validated candidates in local SQLite;
 candidate results without a saved project remain in memory only.
+The `embedded-video-workspace` OpenSpec change additionally approves local MP4
+and MOV review playback, a central source-time clock, and synchronized transcript
+and clip-candidate seeking. Playback remains read-only and project-independent.
 
 Twitch downloading, remote AI, additional AI SDKs/runtimes, automatic clipping,
 vertical rendering, captions, visual detection, face detection, subject tracking,
-video playback or editing, platform exports, scheduling, automatic posting,
+video editing, platform exports, scheduling, automatic posting,
 reusable profiles, project rename, deletion, duplication, search, pinning,
 missing-media relinking, automatic reopening, and complex worker systems are not
 approved.

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QColor, QTextCursor, QTextFormat
+from PySide6.QtGui import QCloseEvent, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,6 +35,16 @@ from spotlight.clip_detection import (
     analyze_transcript,
 )
 from spotlight.media import MediaProbeError, VideoMetadata, probe_video
+from spotlight.playback import (
+    LocalMediaSource,
+    PlaybackClock,
+    PlaybackClockSnapshot,
+    PlaybackPort,
+    QtPlaybackAdapter,
+    find_active_candidate_index,
+    find_active_transcript_index,
+    seconds_to_source_us,
+)
 from spotlight.projects import (
     ProjectRepository,
     ProjectSnapshot,
@@ -51,8 +61,10 @@ from spotlight.transcription import (
     TranscriptSegment,
     transcribe_video,
 )
+from spotlight.video_workspace import TranscriptView, VideoWorkspace
 
 APPLICATION_NAME = "BEEP"
+CANDIDATE_BASE_TEXT_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 
 
 class ProbeSignals(QObject):
@@ -231,7 +243,11 @@ class OpenProjectDialog(QDialog):
 class SpotlightWindow(QMainWindow):
     """Main application window for one active local project."""
 
-    def __init__(self, repository: ProjectRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: ProjectRepository | None = None,
+        playback_adapter: PlaybackPort | None = None,
+    ) -> None:
         super().__init__()
         self.repository = repository
         self.active_project: ProjectSummary | None = None
@@ -273,10 +289,12 @@ class SpotlightWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.transcript_panel = QPlainTextEdit()
-        self.transcript_panel.setReadOnly(True)
+        self.transcript_panel = TranscriptView()
         self.transcript_panel.setPlaceholderText(
             "Your timestamped transcript will appear here."
+        )
+        self.transcript_panel.timestamp_activated.connect(
+            self.seek_to_transcript_segment
         )
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search transcript...")
@@ -300,6 +318,8 @@ class SpotlightWindow(QMainWindow):
         self.candidate_list.setObjectName("CandidateList")
         self.candidate_list.setMinimumWidth(340)
         self.candidate_list.currentRowChanged.connect(self.display_candidate_details)
+        self.candidate_list.itemClicked.connect(self.seek_to_candidate)
+        self.candidate_list.itemActivated.connect(self.seek_to_candidate)
         self.candidate_details = QPlainTextEdit()
         self.candidate_details.setReadOnly(True)
         self.candidate_details.setPlaceholderText(
@@ -311,6 +331,9 @@ class SpotlightWindow(QMainWindow):
         self.cuda_source_value = QLabel("CUDA Libraries: —")
         self.cuda_source_value.setObjectName("MutedText")
         self.cuda_source_value.setWordWrap(True)
+        self.playback_backend_value = QLabel("Playback: not loaded")
+        self.playback_backend_value.setObjectName("MutedText")
+        self.playback_backend_value.setWordWrap(True)
         self._file_details = ""
         self._video_path: Path | None = None
         self._video_metadata: VideoMetadata | None = None
@@ -324,9 +347,14 @@ class SpotlightWindow(QMainWindow):
         self._previous_info_text = ""
         self._has_saved_projects = False
         self.transcript_segments: list[TranscriptSegment] = []
+        self._transcript_start_seconds: tuple[float, ...] = ()
         self.clip_candidates: list[ClipCandidate] = []
         self._match_indices: list[int] = []
+        self._search_selections: list[QTextEdit.ExtraSelection] = []
         self._current_match_index: int | None = None
+        self._active_transcript_index: int | None = None
+        self._active_candidate_index: int | None = None
+        self._source_generation = 0
 
         root = QWidget()
         root.setObjectName("AppRoot")
@@ -345,6 +373,18 @@ class SpotlightWindow(QMainWindow):
         root_layout.addWidget(self._build_status_area())
 
         self.setCentralWidget(root)
+        self.playback_adapter = playback_adapter or QtPlaybackAdapter(
+            self.video_workspace.video_output
+        )
+        self.playback_clock = PlaybackClock(self.playback_adapter)
+        self.playback_clock.snapshot_changed.connect(self._display_playback_snapshot)
+        self.video_workspace.play_pause_requested.connect(
+            self.playback_clock.toggle_play_pause
+        )
+        self.video_workspace.seek_requested.connect(self.playback_clock.seek)
+        self.playback_backend_value.setText(
+            f"Playback: {self.playback_adapter.diagnostics}"
+        )
         self.resize(1180, 820)
         self.refresh_recent_projects()
 
@@ -417,11 +457,6 @@ class SpotlightWindow(QMainWindow):
         return sidebar
 
     def _build_main_content(self) -> QWidget:
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(28, 26, 28, 26)
-        layout.setSpacing(20)
-
         video_card = QFrame()
         video_card.setObjectName("Card")
         video_layout = QVBoxLayout(video_card)
@@ -435,7 +470,6 @@ class SpotlightWindow(QMainWindow):
         video_header.addWidget(self.open_button)
         video_layout.addLayout(video_header)
         video_layout.addWidget(self.info_panel)
-        layout.addWidget(video_card)
 
         transcript_card = QFrame()
         transcript_card.setObjectName("Card")
@@ -459,7 +493,6 @@ class SpotlightWindow(QMainWindow):
         search_row.addWidget(self.next_match_button)
         transcript_layout.addLayout(search_row)
         transcript_layout.addWidget(self.transcript_panel, 1)
-        layout.addWidget(transcript_card, 1)
 
         candidate_card = QFrame()
         candidate_card.setObjectName("Card")
@@ -474,8 +507,13 @@ class SpotlightWindow(QMainWindow):
         candidate_content.addWidget(self.candidate_list, 1)
         candidate_content.addWidget(self.candidate_details, 2)
         candidate_layout.addLayout(candidate_content)
-        layout.addWidget(candidate_card, 1)
-        return content
+
+        self.video_workspace = VideoWorkspace(
+            video_card,
+            transcript_card,
+            candidate_card,
+        )
+        return self.video_workspace
 
     def _build_status_area(self) -> QFrame:
         status = QFrame()
@@ -506,6 +544,7 @@ class SpotlightWindow(QMainWindow):
         metrics.addStretch()
         layout.addLayout(metrics)
         layout.addWidget(self.cuda_source_value)
+        layout.addWidget(self.playback_backend_value)
         return status
 
     @Slot()
@@ -618,6 +657,9 @@ class SpotlightWindow(QMainWindow):
         self.recent_projects_list.setEnabled(enabled)
 
     def _clear_workspace(self) -> None:
+        self._clear_playback(
+            "Open an MP4 or MOV in the active project to enable playback."
+        )
         self._video_path = None
         self._video_metadata = None
         self._video_duration = 0.0
@@ -627,6 +669,7 @@ class SpotlightWindow(QMainWindow):
         self.info_panel.clear()
         self.info_panel.setPlaceholderText("Open a video to view its details.")
         self.transcript_segments = []
+        self._transcript_start_seconds = ()
         self.transcript_panel.clear()
         self.search_box.clear()
         self._clear_clip_candidates()
@@ -670,11 +713,148 @@ class SpotlightWindow(QMainWindow):
         )
         self._video_path = video.source_path if source_available else None
         self.transcribe_button.setEnabled(source_available)
+        if source_available:
+            self._load_playback_source(video.source_path, video.metadata)
+        else:
+            self.video_workspace.reset_playback(
+                f"Playback unavailable: source file not found at {video.source_path}"
+            )
+
+    def _load_playback_source(self, video_path: Path, metadata: VideoMetadata) -> None:
+        """Map project-owned media to a neutral, transient playback source."""
+        self._source_generation += 1
+        self.playback_clock.clear()
+        self._active_transcript_index = None
+        self._active_candidate_index = None
+        self._apply_match_highlights()
+        self._apply_candidate_activity()
+
+        if video_path.suffix.casefold() not in {".mp4", ".mov"}:
+            self.video_workspace.reset_playback(
+                "Playback unavailable: embedded playback supports MP4 and MOV. "
+                "Transcription remains available for this source."
+            )
+            return
+        if not video_path.is_file():
+            self.video_workspace.reset_playback(
+                f"Playback unavailable: source file not found at {video_path}"
+            )
+            return
+
+        source = LocalMediaSource(
+            source_id=self._source_generation,
+            path=video_path,
+            duration_us=seconds_to_source_us(metadata.duration_seconds),
+        )
+        self.playback_clock.load(source)
+
+    def _clear_playback(self, message: str) -> None:
+        """Release playback without changing persisted project data."""
+        self._source_generation += 1
+        self.playback_clock.clear()
+        self._active_transcript_index = None
+        self._active_candidate_index = None
+        self.video_workspace.reset_playback(message)
+        self._apply_match_highlights()
+        self._apply_candidate_activity()
+
+    @Slot(object)
+    def _display_playback_snapshot(self, snapshot: PlaybackClockSnapshot) -> None:
+        """Reflect one clock snapshot across all review views."""
+        self.video_workspace.set_clock_snapshot(snapshot)
+        position_us = snapshot.display_position_us
+        transcript_index = (
+            find_active_transcript_index(
+                self.transcript_segments,
+                position_us,
+                self._transcript_start_seconds,
+            )
+            if snapshot.source_id is not None
+            else None
+        )
+        candidate_index = (
+            find_active_candidate_index(self.clip_candidates, position_us)
+            if snapshot.source_id is not None
+            else None
+        )
+        self._set_active_transcript_index(transcript_index)
+        self._set_active_candidate_index(candidate_index)
+
+    @Slot(int)
+    def seek_to_transcript_segment(self, segment_index: int) -> None:
+        """Seek to an activated transcript timestamp without altering it."""
+        if segment_index < 0 or segment_index >= len(self.transcript_segments):
+            return
+        self._seek_to_seconds(self.transcript_segments[segment_index].start_seconds)
+
+    @Slot(QListWidgetItem)
+    def seek_to_candidate(self, item: QListWidgetItem) -> None:
+        """Seek to an activated candidate's exact stored start timestamp."""
+        row = self.candidate_list.row(item)
+        if row < 0 or row >= len(self.clip_candidates):
+            return
+        self.candidate_list.setCurrentItem(item)
+        self._seek_to_seconds(self.clip_candidates[row].start_seconds)
+
+    def _seek_to_seconds(self, seconds: float) -> None:
+        if not self.playback_clock.snapshot.available:
+            return
+        self.playback_clock.seek(seconds_to_source_us(seconds))
+
+    def _set_active_transcript_index(self, segment_index: int | None) -> None:
+        if segment_index == self._active_transcript_index:
+            return
+        self._active_transcript_index = segment_index
+        self._apply_match_highlights()
+        if segment_index is not None:
+            self._scroll_transcript_block_into_view(segment_index)
+
+    def _scroll_transcript_block_into_view(self, segment_index: int) -> None:
+        block = self.transcript_panel.document().findBlockByNumber(segment_index)
+        if not block.isValid():
+            return
+        cursor = QTextCursor(block)
+        cursor_rect = self.transcript_panel.cursorRect(cursor)
+        viewport_height = self.transcript_panel.viewport().height()
+        if cursor_rect.top() < 0 or cursor_rect.bottom() > viewport_height:
+            scroll_bar = self.transcript_panel.verticalScrollBar()
+            scroll_bar.setValue(
+                scroll_bar.value()
+                + cursor_rect.center().y()
+                - max(1, viewport_height // 2)
+            )
+
+    def _set_active_candidate_index(self, candidate_index: int | None) -> None:
+        if candidate_index == self._active_candidate_index:
+            return
+        self._active_candidate_index = candidate_index
+        self._apply_candidate_activity()
+
+    def _apply_candidate_activity(self) -> None:
+        for index in range(self.candidate_list.count()):
+            item = self.candidate_list.item(index)
+            base_text = item.data(CANDIDATE_BASE_TEXT_ROLE)
+            if not isinstance(base_text, str):
+                base_text = item.text().removeprefix("▶ ")
+                item.setData(CANDIDATE_BASE_TEXT_ROLE, base_text)
+            is_active = index == self._active_candidate_index
+            item.setText(f"▶ {base_text}" if is_active else base_text)
+            font = item.font()
+            font.setWeight(QFont.Weight.DemiBold if is_active else QFont.Weight.Normal)
+            item.setFont(font)
+            item.setData(
+                Qt.ItemDataRole.AccessibleDescriptionRole,
+                "Active at the current playback time" if is_active else "",
+            )
 
     def _show_transcript(
         self, segments: tuple[TranscriptSegment, ...] | list[TranscriptSegment]
     ) -> None:
         self.transcript_segments = list(segments)
+        self._transcript_start_seconds = tuple(
+            segment.start_seconds for segment in segments
+        )
+        self._active_transcript_index = None
         self.transcript_panel.setPlainText(
             "\n".join(
                 f"[{format_timestamp(segment.start_seconds)} - "
@@ -688,14 +868,23 @@ class SpotlightWindow(QMainWindow):
         self, candidates: tuple[ClipCandidate, ...] | list[ClipCandidate]
     ) -> None:
         self.clip_candidates = list(candidates)
+        self._active_candidate_index = None
         self.candidate_list.clear()
         self.candidate_details.clear()
         for rank, candidate in enumerate(self.clip_candidates, start=1):
-            self.candidate_list.addItem(
+            item = QListWidgetItem(
                 f"#{rank}  {candidate.score}/100  {candidate.clip_type}\n"
                 f"{format_timestamp(candidate.start_seconds)} - "
                 f"{format_timestamp(candidate.end_seconds)}  •  {candidate.summary}"
             )
+            item.setData(CANDIDATE_BASE_TEXT_ROLE, item.text())
+            item.setData(
+                Qt.ItemDataRole.AccessibleTextRole,
+                f"Candidate {rank}, score {candidate.score} out of 100, "
+                f"{candidate.clip_type}, starts "
+                f"{format_timestamp(candidate.start_seconds)}",
+            )
+            self.candidate_list.addItem(item)
         if self.clip_candidates:
             self.candidate_list.setCurrentRow(0)
 
@@ -788,6 +977,7 @@ class SpotlightWindow(QMainWindow):
         self.info_panel.setPlainText(
             self._format_video_details(self._file_details, metadata)
         )
+        self._load_playback_source(video_path, metadata)
         self._clear_pending_video()
         self.open_button.setEnabled(True)
         self.transcribe_button.setEnabled(True)
@@ -932,6 +1122,7 @@ class SpotlightWindow(QMainWindow):
     def _clear_clip_candidates(self) -> None:
         """Clear candidate state when the active source or project changes."""
         self.clip_candidates = []
+        self._active_candidate_index = None
         self.candidate_list.clear()
         self.candidate_details.clear()
         self.analyze_clips_button.setEnabled(False)
@@ -1054,7 +1245,7 @@ class SpotlightWindow(QMainWindow):
 
         self.previous_match_button.setEnabled(has_matches)
         self.next_match_button.setEnabled(has_matches)
-        self._apply_match_highlights()
+        self._rebuild_search_highlights()
 
     @Slot()
     def select_next_match(self) -> None:
@@ -1074,13 +1265,13 @@ class SpotlightWindow(QMainWindow):
             return
 
         self._current_match_index = selected_index
-        self._apply_match_highlights()
+        self._rebuild_search_highlights()
         block = self.transcript_panel.document().findBlockByNumber(selected_index)
         cursor = QTextCursor(block)
         self.transcript_panel.setTextCursor(cursor)
         self.transcript_panel.centerCursor()
 
-    def _apply_match_highlights(self) -> None:
+    def _rebuild_search_highlights(self) -> None:
         selections: list[QTextEdit.ExtraSelection] = []
         document = self.transcript_panel.document()
         for segment_index in self._match_indices:
@@ -1096,6 +1287,38 @@ class SpotlightWindow(QMainWindow):
                 True,
             )
             selections.append(selection)
+        self._search_selections = selections
+        self._apply_match_highlights()
+
+    def _apply_match_highlights(self) -> None:
+        selections = list(self._search_selections)
+        document = self.transcript_panel.document()
+        active_index = self._active_transcript_index
+        if active_index is not None:
+            active_block = document.findBlockByNumber(active_index)
+            if active_block.isValid():
+                active = QTextEdit.ExtraSelection()
+                active.cursor = QTextCursor(active_block)
+                active.cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+                if active_index not in self._match_indices:
+                    active.format.setBackground(QColor("#222D42"))
+                active.format.setFontUnderline(True)
+                active.format.setFontWeight(int(QFont.Weight.DemiBold))
+                active.format.setProperty(
+                    QTextFormat.Property.FullWidthSelection,
+                    True,
+                )
+                selections.append(active)
+                segment = self.transcript_segments[active_index]
+                self.transcript_panel.setAccessibleDescription(
+                    "Active transcript segment from "
+                    f"{format_timestamp(segment.start_seconds)} to "
+                    f"{format_timestamp(segment.end_seconds)}."
+                )
+        else:
+            self.transcript_panel.setAccessibleDescription(
+                "Review transcript segments. Activate a timestamp to seek the video."
+            )
         self.transcript_panel.setExtraSelections(selections)
 
     @Slot(str)
@@ -1118,6 +1341,11 @@ class SpotlightWindow(QMainWindow):
         self.use_cpu_button.setVisible(self._video_path is not None)
         self.use_cpu_button.setEnabled(self._video_path is not None)
         self._set_project_switching_enabled(True)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Release native playback resources before the window closes."""
+        self.playback_clock.close()
+        super().closeEvent(event)
 
 
 def format_timestamp(seconds: float) -> str:

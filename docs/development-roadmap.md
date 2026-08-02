@@ -134,3 +134,12 @@ Brand name is optional metadata on one project, not a reusable profile. Project
 rename, deletion, duplication, search, pinning, missing-media relinking, automatic
 reopening, Twitch importing, editing, exports, titles, descriptions, thumbnails,
 and posting remain deferred.
+
+## Approved extension: embedded video workspace
+
+The `embedded-video-workspace` OpenSpec change approves read-only local playback
+of compatible MP4 and MOV project sources through a replaceable Qt Multimedia
+adapter. A central source-time clock synchronizes the playback timeline,
+timestamped transcript, and ranked clip candidates. The layout is video-first at
+1440p and remains usable at 1080p and 4K. This approval does not include editing,
+trimming, exporting, captions, vertical rendering, publishing, or Twitch ingest.

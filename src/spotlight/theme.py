@@ -72,6 +72,30 @@ QFrame#Card {{
     border-radius: 10px;
 }}
 
+QVideoWidget#VideoOutput {{
+    background-color: #000000;
+    border: 1px solid #2B2D40;
+    border-radius: 7px;
+}}
+
+QLabel#PlaybackMessage {{
+    background-color: #0B0B11;
+    color: #B9C0D4;
+    border-left: 3px solid {BLUE_ACCENT};
+    padding: 7px 10px;
+}}
+
+QLabel#PlaybackTime {{
+    color: #F4F6FF;
+    font-family: "Consolas";
+    font-weight: 600;
+}}
+
+QLabel#SeekingStatus {{
+    color: {PINK_ACCENT};
+    font-weight: 700;
+}}
+
 QLabel#SectionTitle {{
     background: transparent;
     color: #FFFFFF;
@@ -226,6 +250,41 @@ QLabel#ErrorText {{
 QPushButton#SearchNavigationButton:hover {{
     border-color: {BLUE_ACCENT};
     color: {BLUE_ACCENT};
+}}
+
+QPushButton#PlaybackButton {{
+    min-width: 72px;
+}}
+
+QSlider#PlaybackTimeline::groove:horizontal {{
+    height: 7px;
+    background-color: #2A2D3D;
+    border-radius: 3px;
+}}
+
+QSlider#PlaybackTimeline::sub-page:horizontal {{
+    background-color: {BLUE_ACCENT};
+    border-radius: 3px;
+}}
+
+QSlider#PlaybackTimeline::handle:horizontal {{
+    width: 16px;
+    margin: -5px 0;
+    background-color: {PINK_ACCENT};
+    border: 2px solid #FFFFFF;
+    border-radius: 8px;
+}}
+
+QSlider#PlaybackTimeline:focus {{
+    border: 1px solid {BLUE_ACCENT};
+}}
+
+QSplitter::handle {{
+    background-color: #242438;
+}}
+
+QSplitter::handle:hover {{
+    background-color: {BLUE_ACCENT};
 }}
 
 QProgressBar {{
